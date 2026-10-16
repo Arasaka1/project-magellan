@@ -1,23 +1,23 @@
-import { createTerrain } from './terrain.mjs?v=flight-1';
-import { createWater } from './water.mjs?v=flight-1';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, farIndices, farCoverage } from './streaming-layout.mjs?v=flight-1';
+import { createTerrain } from './terrain.mjs?v=physics-1';
+import { createWater } from './water.mjs?v=physics-1';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-1';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=flight-1';
-import { createVehiclePresentation } from './vehicle-presentation.mjs?v=flight-1';
+import { createDebris } from './debris.mjs?v=physics-1';
+import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-1';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
 import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=grass-1';
 import { installSunShadowFade } from './shadow-fade.mjs?v=grass-1';
-import { createGrass } from './grass.mjs?v=flight-1';
+import { createGrass } from './grass.mjs?v=physics-1';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=slider-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
-import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=flight-1';
-import { createClouds } from './clouds.mjs?v=flight-1';
+import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-1';
+import { createClouds } from './clouds.mjs?v=physics-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=flight-1';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=flight-1';
+import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-1';
+import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-1';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -84,7 +84,15 @@ function startQuality() {
   return auto ? auto.level : presetLevel(settings.quality);
 }
 qualityLevel = startQuality();
-const keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'jump', ShiftLeft: 'brake', ShiftRight: 'brake' };
+const keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'jump', ShiftLeft: 'brake', ShiftRight: 'brake', KeyQ: 'yawLeft', KeyE: 'yawRight' };
+// In the air the same keys fly on three axes. W/S throttle; ↑/↓ pitch like a
+// flight stick (↓ pulls the nose up), with Space/Shift as climb/dive; A/D or
+// ←/→ roll; Q/E yaw. Touch: ↑↓ throttle, CLIMB/DIVE pitch, slider roll.
+const flightKeys = {
+  throttleUp: ['KeyW'], throttleDown: ['KeyS'], pitchUp: ['Space', 'ArrowDown'], pitchDown: ['ShiftLeft', 'ShiftRight', 'ArrowUp'],
+  rollLeft: ['KeyA', 'ArrowLeft'], rollRight: ['KeyD', 'ArrowRight'], yawLeft: ['KeyQ'], yawRight: ['KeyE'],
+};
+const flightTouch = { throttleUp: 'up', throttleDown: 'down', pitchUp: 'jump', pitchDown: 'brake', rollLeft: 'left', rollRight: 'right' };
 
 installSunShadowFade();
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -99,11 +107,17 @@ renderer.domElement.tabIndex = 0;
 renderer.domElement.setAttribute('aria-label', 'Driving world. WASD to drive, Space to jump, Shift to drift, R to recover, Escape to pause.');
 $('game').append(renderer.domElement);
 const scene = new THREE.Scene();
-const waterSystem = createWater(scene);
+// Water fades with the same (altitude-dependent) fog distances as terrain.
+const fogUniforms = { uFogNear: { value: 350 }, uFogFar: { value: 1450 } }, streamCenterUniform = { value: new THREE.Vector2() };
+const waterSystem = createWater(scene, fogUniforms, streamCenterUniform);
 const skyColor = new THREE.Color('#b9cdd0');
 scene.background = skyColor;
-scene.fog = new THREE.Fog(skyColor, 350, 1450);
-const camera = new THREE.PerspectiveCamera(57, innerWidth / innerHeight, .1, 2600);
+// Fog is applied after tone mapping, the sky before it. This is the sky's
+// horizon colour after ACES at the current exposure, so fully fogged terrain
+// disappears into the sky instead of leaving a darker band on the skyline.
+const FOG_COLOR = new THREE.Color('#c8d1d3');
+scene.fog = new THREE.Fog(FOG_COLOR, 350, 1450);
+const camera = new THREE.PerspectiveCamera(57, innerWidth / innerHeight, .1, 6400);
 scene.add(new THREE.HemisphereLight('#e4efed', '#787257', 1.6));
 const sun = new THREE.DirectionalLight('#fff0d2', 2.5);
 sun.castShadow = true;
@@ -112,7 +126,7 @@ Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, n
 sun.shadow.bias = -.00015; sun.shadow.normalBias = .04;
 scene.add(sun, sun.target);
 // A softly graded sky travels with the camera; the horizon never runs out.
-const sky = new THREE.Mesh(new THREE.SphereGeometry(2300, 24, 16), new THREE.ShaderMaterial({
+const sky = new THREE.Mesh(new THREE.SphereGeometry(6000, 24, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false,
   uniforms: { top: { value: new THREE.Color('#729eaf') }, bottom: { value: skyColor } },
   vertexShader: 'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
@@ -138,7 +152,7 @@ const clouds = createClouds(scene, seed);
 // Paint roads directly onto the terrain surface. Geometry, collision height and
 // asphalt now share one surface: no raised ribbons, cuttings, seams or walls.
 const terrainMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
-const streamUniforms = { uStreamCenter: { value: new THREE.Vector2() } };
+const streamUniforms = { uStreamCenter: streamCenterUniform };
 const grass = createGrass(streamUniforms.uStreamCenter, levels[qualityLevel].grass);
 const roadUniforms = { uRoadPhase: { value: world.phase } };
 // Geometry is already coarse at the streaming boundary. Moving the boundary
@@ -147,7 +161,9 @@ const lodDeclaration = `uniform vec2 uStreamCenter;
 attribute float coarseHeight;
 attribute vec3 coarseNormal;
 attribute vec3 coarseColor;
+attribute float ultraHeight;
 float terrainBlend(){return smoothstep(220.0,360.0,distance((modelMatrix*vec4(position,1.0)).xz,uStreamCenter));}
+float ultraBlend(){return smoothstep(${ULTRA_BLEND_START.toFixed(1)},${ULTRA_BLEND_END.toFixed(1)},distance((modelMatrix*vec4(position,1.0)).xz,uStreamCenter));}
 `;
 
 terrainMaterial.onBeforeCompile = shader => {
@@ -155,7 +171,7 @@ terrainMaterial.onBeforeCompile = shader => {
   shader.vertexShader = lodDeclaration + 'varying vec2 vGroundXZ;\n' + shader.vertexShader;
   shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nobjectNormal=mix(objectNormal,coarseNormal,terrainBlend());');
   shader.vertexShader = shader.vertexShader.replace('#include <color_vertex>', '#include <color_vertex>\nvColor=mix(vColor,coarseColor,terrainBlend());');
-  shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y=mix(position.y,coarseHeight,terrainBlend());\nvGroundXZ=(modelMatrix*vec4(position,1.0)).xz;');
+  shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y=mix(mix(position.y,coarseHeight,terrainBlend()),ultraHeight,ultraBlend());\nvGroundXZ=(modelMatrix*vec4(position,1.0)).xz;');
   shader.fragmentShader = `varying vec2 vGroundXZ;
     uniform float uRoadPhase;
     float centerAt(float s,float band,float axis){
@@ -187,7 +203,7 @@ function geometryFromData(data) {
   const geometry = new THREE.BufferGeometry();
   for (const [name, array] of Object.entries(data)) {
     if (name === 'index') geometry.setIndex(new THREE.BufferAttribute(array, 1));
-    else geometry.setAttribute(name, new THREE.BufferAttribute(array, name === 'coarseHeight' ? 1 : 3));
+    else geometry.setAttribute(name, new THREE.BufferAttribute(array, name === 'coarseHeight' || name === 'ultraHeight' ? 1 : 3));
   }
   geometry.computeBoundingSphere();
   return geometry;
@@ -245,10 +261,12 @@ function softenScenery(mat) {
   mat.needsUpdate = true;
 }
 const chunks = new Map();
-const view = NEAR_VIEW, farTiles = new Map();
+const view = NEAR_VIEW, farTiles = new Map(), ultraTiles = new Map();
 let lastCX = Infinity, lastCZ = Infinity;
 let worker, generation = 0, jobId = 0, jobs = [], pending = new Map(), completed = [];
 let loading = true, resumeAfterLoad = false, loadingStarted = bootStarted, streamError = null;
+// Distant water is rebuilt in the worker after every 500 m of travel.
+let distantAt = { x: Infinity, z: Infinity }, distantReady = false;
 function buildChunk({ cx, cz, ground: groundData, props, features, roadside, grass: grassData }) {
   const buildStart = performance.now();
   const group = new THREE.Group(); group.position.set(cx * CHUNK, 0, cz * CHUNK);
@@ -300,6 +318,8 @@ function processBreakage() {
     for (const { mesh, index } of chunk?.propInstances.get(prop.id) || []) {
       mesh.getMatrixAt(index, matrix); matrix.scale(scaleVec.set(0, 0, 0)); mesh.setMatrixAt(index, matrix); mesh.instanceMatrix.needsUpdate = true;
     }
+    const impostors = farTiles.get(`${Math.floor(prop.x / FAR_SIZE)},${Math.floor(prop.z / FAR_SIZE)}`)?.userData.impostors, k = impostors?.ids.get(prop.id);
+    if (k !== undefined) { impostors.mesh.getMatrixAt(k, matrix); matrix.scale(scaleVec.set(0, 0, 0)); impostors.mesh.setMatrixAt(k, matrix); impostors.mesh.instanceMatrix.needsUpdate = true; }
     debris.burst(prop);
     if (prop.type === 'tree') treeBreakage.burst({ ...prop, variant: nature.variantFor(prop) });
     if (!muted && audio) audio.breaks.play(prop.type, Math.hypot(prop.vx, prop.vz));
@@ -308,6 +328,65 @@ function processBreakage() {
 function disposeChunk(chunk) {
   scene.remove(chunk.group);
   chunk.group.traverse(o => { if (o.geometry?.userData.owned) o.geometry.dispose(); if (o.isInstancedMesh) o.dispose(); });
+}
+// Distant forests: one instanced pine silhouette per far tile, placed at the
+// same seeded positions as the real trees. They fade in exactly as the real
+// trees fade out (220–350 m), so flying away never thins the forest.
+const impostorGeometry = (() => {
+  const lower = new THREE.ConeGeometry(1.75, 5, 6).translate(0, 3.2, 0), upper = new THREE.ConeGeometry(1.15, 3.6, 6).translate(0, 5.6, 0);
+  const merged = new THREE.BufferGeometry(), parts = [lower.toNonIndexed(), upper.toNonIndexed()];
+  for (const name of ['position', 'normal']) merged.setAttribute(name, new THREE.Float32BufferAttribute(parts.flatMap(g => [...g.getAttribute(name).array]), 3));
+  return merged;
+})();
+const impostorMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+{
+  const multisampled = renderer.getContext().getContextAttributes().antialias;
+  Object.assign(impostorMaterial, { transparent: true, alphaToCoverage: multisampled, blending: multisampled ? THREE.NoBlending : THREE.NormalBlending, depthWrite: multisampled });
+  impostorMaterial.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, streamUniforms);
+    shader.vertexShader = 'attribute vec3 groundY; uniform vec2 uStreamCenter; varying float vFade;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
+      vec4 world = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+      float d = distance((modelMatrix * instanceMatrix[3]).xz, uStreamCenter);
+      // Follow the terrain tier actually drawn under the tree: fine, far, horizon.
+      world.y += mix(mix(groundY.x, groundY.y, smoothstep(220.0, 360.0, d)), groundY.z, smoothstep(${ULTRA_BLEND_START.toFixed(1)}, ${ULTRA_BLEND_END.toFixed(1)}, d));
+      vFade = smoothstep(220.0, 350.0, d);
+      vec4 mvPosition = viewMatrix * world;
+      gl_Position = projectionMatrix * mvPosition;`);
+    shader.fragmentShader = 'varying float vFade;\n' + shader.fragmentShader.replace('#include <alphatest_fragment>', `
+      #include <alphatest_fragment>
+      if (vFade <= 0.001) discard;
+      diffuseColor.a *= vFade;`);
+  };
+  impostorMaterial.customProgramCacheKey = () => 'tree-impostor-v1';
+}
+let impostorsEnabled = qualityLevel > 0;
+function buildImpostors(tile, trees) {
+  const keep = trees.id.map((id, i) => world.brokenProps.has(id) ? -1 : i).filter(i => i >= 0);
+  if (!keep.length) return;
+  const geometry = impostorGeometry.clone(), groundY = new Float32Array(keep.length * 3);
+  const mesh = new THREE.InstancedMesh(geometry, impostorMaterial, keep.length), color = new THREE.Color(), ids = new Map();
+  keep.forEach((i, k) => {
+    pointVec.set(trees.x[i] - tile.position.x, 0, trees.z[i] - tile.position.z); quaternion.setFromAxisAngle(upAxis, trees.turn[i]);
+    scaleVec.setScalar(trees.size[i]); matrix.compose(pointVec, quaternion, scaleVec); mesh.setMatrixAt(k, matrix);
+    groundY.set([trees.fineY[i] - .1, trees.coarseY[i] - .1, trees.ultraY[i] - .1], k * 3);
+    mesh.setColorAt(k, color.setHSL(.28 + (hash(i, k, seed) - .5) * .05, .2 + hash(k, i, seed) * .1, .27 + hash(i, i, seed) * .06));
+    ids.set(trees.id[i], k);
+  });
+  geometry.setAttribute('groundY', new THREE.InstancedBufferAttribute(groundY, 3));
+  mesh.visible = impostorsEnabled; mesh.frustumCulled = false; mesh.name = 'Tree impostors';
+  tile.add(mesh); tile.userData.impostors = { mesh, ids };
+}
+function disposeTile(tile) {
+  scene.remove(tile); tile.geometry.dispose();
+  if (tile.userData.impostors) { tile.userData.impostors.mesh.geometry.dispose(); tile.userData.impostors.mesh.dispose(); }
+}
+function refreshUltraTile(tile) {
+  const { cx: tx, cz: tz } = tile.userData, hasFar = (fx, fz) => farTiles.has(`${fx},${fz}`);
+  const coverage = ultraCoverage(tx, tz, hasFar);
+  if (tile.userData.coverage === coverage) return;
+  tile.geometry.setIndex(ultraIndices(tx, tz, hasFar));
+  tile.userData.coverage = coverage;
 }
 function refreshFarTile(tx, tz) {
   const tile = farTiles.get(`${tx},${tz}`);
@@ -320,7 +399,9 @@ function refreshFarTile(tx, tz) {
 }
 function desired(job) {
   if (job.kind === 'water') return waterSystem.wants(job.lake.id);
+  if (job.kind === 'distant-water') return true;
   const cx = Math.floor(vehicle.x / CHUNK), cz = Math.floor(vehicle.z / CHUNK);
+  if (job.kind === 'ultra') return Math.max(Math.abs(job.cx - Math.floor(vehicle.x / ULTRA_SIZE)), Math.abs(job.cz - Math.floor(vehicle.z / ULTRA_SIZE))) <= ULTRA_VIEW;
   return job.kind === 'near' ? Math.max(Math.abs(job.cx - cx), Math.abs(job.cz - cz)) <= view + 1
     : Math.max(Math.abs(job.cx - Math.floor(vehicle.x / FAR_SIZE)), Math.abs(job.cz - Math.floor(vehicle.z / FAR_SIZE))) <= FAR_VIEW;
 }
@@ -338,33 +419,50 @@ function streamWorld(force = false) {
   }
   for (const [key, tile] of farTiles) {
     if (Math.max(Math.abs(tile.userData.cx - fx), Math.abs(tile.userData.cz - fz)) > FAR_VIEW) {
-      scene.remove(tile); tile.geometry.dispose(); farTiles.delete(key);
+      disposeTile(tile); farTiles.delete(key);
     } else refreshFarTile(tile.userData.cx, tile.userData.cz);
   }
+  const ux = Math.floor(vehicle.x / ULTRA_SIZE), uz = Math.floor(vehicle.z / ULTRA_SIZE);
+  for (const [key, tile] of ultraTiles) {
+    if (Math.max(Math.abs(tile.userData.cx - ux), Math.abs(tile.userData.cz - uz)) > ULTRA_VIEW) { disposeTile(tile); ultraTiles.delete(key); }
+    else refreshUltraTile(tile);
+  }
   const existing = new Set([...pending.values()].map(job => job.kind === 'water' ? `water:${job.lake.id}` : `${job.kind}:${job.cx},${job.cz}`));
-  jobs = [];
+  const queuedDistant = jobs.find(job => job.kind === 'distant-water');
+  jobs = queuedDistant ? [queuedDistant] : [];
   function enqueue(kind, x, z, priority) {
-    if ((kind === 'near' ? chunks : farTiles).has(`${x},${z}`) || existing.has(`${kind}:${x},${z}`)) return;
+    if ({ near: chunks, far: farTiles, ultra: ultraTiles }[kind].has(`${x},${z}`) || existing.has(`${kind}:${x},${z}`)) return;
     jobs.push({ kind, cx: x, cz: z, seed, generation, id: ++jobId, priority });
   }
+  // Tiles ahead of a fast car or plane load first, in every tier.
+  const speed = Math.hypot(vehicle.vx, vehicle.vz), ahead = (dx, dz) => speed > 1 && (dx || dz) ? (dx * vehicle.vx + dz * vehicle.vz) / (Math.hypot(dx, dz) * speed) * Math.min(speed / 40, 1) : 0;
   for (let dx = -view - 1; dx <= view + 1; dx++) for (let dz = -view - 1; dz <= view + 1; dz++) {
     const ring = Math.max(Math.abs(dx), Math.abs(dz));
-    // Visible chunks first; ahead-of-car ordering helps sharp turns too.
-    enqueue('near', cx + dx, cz + dz, (ring > view ? 100 : 0) + Math.hypot(dx, dz) - (dx * vehicle.vx + dz * vehicle.vz) / 1000);
+    enqueue('near', cx + dx, cz + dz, (ring > view ? 100 : 0) + Math.hypot(dx, dz) - ahead(dx, dz) * 1.5);
   }
-  for (let dx = -FAR_VIEW; dx <= FAR_VIEW; dx++) for (let dz = -FAR_VIEW; dz <= FAR_VIEW; dz++) enqueue('far', fx + dx, fz + dz, 3 + Math.hypot(dx, dz) * 2);
+  // Far and horizon tiles interleave with near chunks instead of waiting for
+  // all of them: at flying speed new near chunks never stop arriving.
+  for (let dx = -FAR_VIEW; dx <= FAR_VIEW; dx++) for (let dz = -FAR_VIEW; dz <= FAR_VIEW; dz++) enqueue('far', fx + dx, fz + dz, 1 + Math.hypot(dx, dz) * 1.5 - ahead(dx, dz) * 1.5);
+  for (let dx = -ULTRA_VIEW; dx <= ULTRA_VIEW; dx++) for (let dz = -ULTRA_VIEW; dz <= ULTRA_VIEW; dz++) enqueue('ultra', ux + dx, uz + dz, .5 + Math.hypot(dx, dz) - ahead(dx, dz));
   for (const lake of waterJobs) if (!existing.has(`water:${lake.id}`)) {
     jobs.push({ kind: 'water', lake, seed, generation, id: ++jobId,
       priority: 2 + Math.max(0, Math.hypot(lake.x - vehicle.x, lake.z - vehicle.z) - Math.max(lake.rx, lake.rz)) / CHUNK });
+  }
+  if (!queuedDistant && Math.hypot(vehicle.x - distantAt.x, vehicle.z - distantAt.z) > 500 && ![...pending.values()].some(job => job.kind === 'distant-water')) {
+    distantAt = { x: vehicle.x, z: vehicle.z };
+    jobs.push({ kind: 'distant-water', x: vehicle.x, z: vehicle.z, seed, generation, id: ++jobId, priority: 3 });
   }
   jobs.sort((a, b) => a.priority - b.priority);
   profiler.record('streamSync', performance.now() - syncStarted);
 }
 function worldReady() {
   for (let dx = -view; dx <= view; dx++) for (let dz = -view; dz <= view; dz++) if (!chunks.has(`${lastCX + dx},${lastCZ + dz}`)) return false;
-  return farTiles.size === (FAR_VIEW * 2 + 1) ** 2 && waterSystem.ready;
+  return farTiles.size === (FAR_VIEW * 2 + 1) ** 2 && ultraTiles.size === (ULTRA_VIEW * 2 + 1) ** 2 && waterSystem.ready && distantReady;
 }
 function drivable() {
+  // Flight never touches chunk geometry: the surface is procedural. Pausing a
+  // plane mid-air while scenery streams would only look like a hitch.
+  if (vehicle.flying) return true;
   for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) if (!chunks.has(`${lastCX + dx},${lastCZ + dz}`)) return false;
   return true;
 }
@@ -372,31 +470,40 @@ function processStreaming() {
   if (!worker || streamError || natureError) return;
   const budgetStart = performance.now();
   // Worker messages are installed within a frame budget, rather than all at
-  // once. At most two jobs are in flight, keeping memory and upload work bounded.
+  // once. At most three jobs are in flight, keeping memory and upload work bounded.
   while (nature && completed.length && performance.now() - budgetStart < 4) {
     const job = completed.shift(); pending.delete(job.id);
     if (job.generation !== generation || !desired(job)) continue;
     if (job.kind === 'water') {
       profiler.measure('waterInstall', () => waterSystem.install(job.lake, job.water));
+    } else if (job.kind === 'distant-water') {
+      profiler.measure('distantWaterInstall', () => waterSystem.installDistant(job.water, job.ranges)); distantReady = true;
     } else if (job.kind === 'near') {
       buildChunk(job);
       chunks.get(`${job.cx},${job.cz}`).group.visible = Math.max(Math.abs(job.cx - lastCX), Math.abs(job.cz - lastCZ)) <= view;
       refreshFarTile(Math.floor(job.cx / 4), Math.floor(job.cz / 4));
+    } else if (job.kind === 'ultra') {
+      const tile = new THREE.Mesh(geometryFromData(job.ground), terrainMaterial);
+      tile.position.set(job.cx * ULTRA_SIZE, 0, job.cz * ULTRA_SIZE);
+      tile.userData = { cx: job.cx, cz: job.cz };
+      ultraTiles.set(`${job.cx},${job.cz}`, tile); refreshUltraTile(tile); scene.add(tile);
     } else {
       const tile = new THREE.Mesh(geometryFromData(job.ground), terrainMaterial);
       tile.position.set(job.cx * FAR_SIZE, 0, job.cz * FAR_SIZE);
       tile.userData = { cx: job.cx, cz: job.cz }; tile.receiveShadow = true;
       farTiles.set(`${job.cx},${job.cz}`, tile); refreshFarTile(job.cx, job.cz); scene.add(tile);
+      buildImpostors(tile, job.trees);
+      const parent = ultraTiles.get(`${Math.floor(job.cx / 4)},${Math.floor(job.cz / 4)}`); if (parent) refreshUltraTile(parent);
     }
   }
   profiler.record('streamInstall', performance.now() - budgetStart);
-  while (pending.size < 2 && jobs.length) {
+  while (pending.size < 3 && jobs.length) {
     const job = jobs.shift(); if (!desired(job)) continue;
     pending.set(job.id, job); worker.postMessage(job);
   }
   if (loading) {
-    const total = (view * 2 + 1) ** 2 + (FAR_VIEW * 2 + 1) ** 2;
-    const count = [...chunks.values()].filter(chunk => chunk.group.visible).length + farTiles.size;
+    const total = (view * 2 + 1) ** 2 + (FAR_VIEW * 2 + 1) ** 2 + (ULTRA_VIEW * 2 + 1) ** 2;
+    const count = [...chunks.values()].filter(chunk => chunk.group.visible).length + farTiles.size + ultraTiles.size;
     $('startBtn').firstElementChild.textContent = carError ? 'Unable to load the car' : !nature ? 'Preparing scenery' : worldReady() && !carReady ? 'Preparing your car' : `Preparing the world · ${Math.min(99, Math.floor(count / total * 100))}%`;
     if (worldReady() && carReady) {
       loading = false; $('startBtn').disabled = false; $('startBtn').firstElementChild.textContent = started ? 'Keep exploring' : 'Start exploring';
@@ -414,10 +521,11 @@ function beginWorldLoad(continueDriving = false) {
   loading = true; resumeAfterLoad = continueDriving; running = false; streamError = null; loadingStarted = performance.now();
   $('startBtn').disabled = true; resetTiming();
   for (const chunk of chunks.values()) disposeChunk(chunk); chunks.clear();
-  for (const tile of farTiles.values()) { scene.remove(tile); tile.geometry.dispose(); } farTiles.clear();
+  for (const tile of farTiles.values()) disposeTile(tile); farTiles.clear();
+  for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
-  waterSystem.clear();
-  worker = new Worker(new URL('./world-worker.mjs?v=flight-1', import.meta.url), { type: 'module' });
+  waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
+  worker = new Worker(new URL('./world-worker.mjs?v=physics-1', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -488,6 +596,8 @@ function toast(text) { $('toast').textContent = text; $('toast').classList.add('
 function clearInput() { releaseSlider(false); keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
 function syncInput() {
   for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k);
+  const touches = [...touchStates.values()];
+  for (const [axis, codes] of Object.entries(flightKeys)) input[axis] = codes.some(code => keyStates.has(code)) || touches.includes(flightTouch[axis]);
   // Analog axes add to the digital keys; physics clamps the combined value.
   input.steer = slider.pointer === null ? undefined : steerAxis(slider.value, settings.sensitivity);
 }
@@ -606,6 +716,9 @@ function applyQuality(index) {
     sun.shadow.map?.dispose(); sun.shadow.map = null;
   }
   grass.setQuality(level.grass);
+  // Distant tree stand-ins are skipped on Low.
+  impostorsEnabled = index > 0;
+  for (const tile of farTiles.values()) if (tile.userData.impostors) tile.userData.impostors.mesh.visible = impostorsEnabled;
   syncSettings();
 }
 const qualityNames = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High' };
@@ -706,11 +819,12 @@ function updateHUD() {
   const touchBrake = document.querySelector('[data-control="brake"]');
   touchBrake.textContent = planeMode ? 'DIVE' : vehicle.floating ? 'SLOW' : 'DRIFT';
   touchBrake.setAttribute('aria-label', planeMode ? 'Dive' : vehicle.floating ? 'Slow boat' : 'Drift');
+  document.body.classList.toggle('plane-mode', planeMode);
   $('flyBtn').textContent = planeMode ? 'LAND' : 'FLY'; $('flyBtn').setAttribute('aria-label', planeMode ? 'Land' : 'Fly');
   const altitude = vehicle.y - world.surface(vehicle.x, vehicle.z);
-  $('surfaceState').textContent = flying ? vehicle.airspeed < STALL_SPEED + 3 ? 'STALL WARNING — ADD SPEED' : vehicle.flightMode ? 'FLYING' : 'GLIDING IN TO LAND'
+  $('surfaceState').textContent = flying ? vehicle.alpha > .24 || vehicle.airspeed < STALL_SPEED ? 'STALL WARNING — LOWER THE NOSE' : vehicle.flightMode ? 'FLYING' : 'GLIDING IN TO LAND'
     : unfolding ? vehicle.flightMode ? 'WINGS UNFOLDING' : 'FOLDING WINGS' : taxiing ? 'TAXIING' : transforming ? vehicle.boatMode ? 'DEPLOYING BOAT HULL' : 'RETURNING TO WHEELS' : vehicle.boatMode ? 'BOAT MODE' : !vehicle.grounded ? 'A LITTLE AIR' : input.brake && speed > 10 ? 'TAKE IT SIDEWAYS' : vehicle.onRoad ? 'ON THE ROAD' : 'OFF THE BEATEN PATH';
-  $('airtime').textContent = flying ? `ALT ${Math.round(altitude)} M · ${vehicle.vy >= 0 ? '+' : '−'}${Math.abs(vehicle.vy).toFixed(0)} M/S`
+  $('airtime').textContent = flying ? `ALT ${Math.round(altitude)} M · ${vehicle.vy >= 0 ? '+' : '−'}${Math.abs(vehicle.vy).toFixed(0)} M/S · THR ${Math.round(vehicle.throttleLevel * 100)}%`
     : unfolding ? `WINGS · ${Math.round(vehicle.flight * 100)}%` : taxiing ? `LIFT-OFF AT ${Math.round(TAKEOFF_SPEED * 3.6)} KM/H` : transforming ? `TRANSFORMING · ${Math.round((vehicle.boatMode ? vehicle.transform : 1 - vehicle.transform) * 100)}%` : vehicle.floating ? `${vehicle.waterDepth.toFixed(1)} M WATER · W/S THROTTLE` : !vehicle.grounded ? `${Math.round(vehicle.airDistance)} M · ${vehicle.airtime.toFixed(1)} S AIR` : vehicle.bestJump > 5 ? 'BEST JUMP ' + Math.round(vehicle.bestJump) + ' M' : vehicle.bestAir > .4 ? 'BEST AIR ' + vehicle.bestAir.toFixed(1) + ' S' : 'READY TO ROAM';
   const lake = world.lakesNear(vehicle.x, vehicle.z, 700).sort((a, b) => Math.hypot(a.x - vehicle.x, a.z - vehicle.z) - Math.hypot(b.x - vehicle.x, b.z - vehicle.z))[0];
   if (lake) {
@@ -731,7 +845,7 @@ function updateHUD() {
   profiler.record('hud', performance.now() - hudStarted);
 }
 const vehiclePosition = new THREE.Vector3(), cameraPosition = new THREE.Vector3(), cameraTarget = new THREE.Vector3(), desiredCamera = new THREE.Vector3(), forward = new THREE.Vector3(), look = new THREE.Vector3();
-const previousDesiredCamera = new THREE.Vector3(), previousLook = new THREE.Vector3();
+const previousDesiredCamera = new THREE.Vector3(), previousLook = new THREE.Vector3(), attitude = new THREE.Quaternion();
 let previousTargetFov = camera.fov;
 const debris = createDebris(scene), rollPivot = new THREE.Vector3();
 let treeBreakage = null;
@@ -740,7 +854,10 @@ let previousTime = performance.now(), accumulator = 0, uiTime = 0, mapTime = 0, 
 let reportedBoat = vehicle.boatMode, reportedFlying = vehicle.flying;
 function updateDesiredCamera(pose = vehicle) {
   vehiclePosition.set(pose.x, pose.y, pose.z);
-  forward.set(Math.sin(pose.heading), 0, Math.cos(pose.heading));
+  // In flight the camera follows the nose in three dimensions, so it stays
+  // behind the plane through climbs, dives and loops (and never rolls).
+  if (pose.useAttitude ?? pose.flying) forward.set(0, 0, 1).applyQuaternion(attitude.set(pose.qx, pose.qy, pose.qz, pose.qw));
+  else forward.set(Math.sin(pose.heading), 0, Math.cos(pose.heading));
   if (!started) {
     desiredCamera.set(pose.x - 8.5, pose.y + 4.6, pose.z - 11.8);
     look.set(pose.x + 2.7, pose.y + 1.2, pose.z + 3.5);
@@ -760,8 +877,9 @@ function render(dt) {
   const pose = vehiclePresentation.sample(running ? accumulator / FIXED_DT : 1);
   streamUniforms.uStreamCenter.value.set(pose.x, pose.z);
   for (const chunk of chunks.values()) grass.update(chunk.grassMesh, chunk.cx, chunk.cz, pose.x, pose.z);
-  car.rotation.set(pose.pitch, pose.heading, pose.roll, 'YXZ');
-  rollPivot.set(0, 1, 0).applyEuler(car.rotation);
+  if (pose.useAttitude) car.quaternion.set(pose.qx, pose.qy, pose.qz, pose.qw);
+  else car.rotation.set(pose.pitch, pose.heading, pose.roll, 'YXZ');
+  rollPivot.set(0, 1, 0).applyQuaternion(car.quaternion);
   car.position.set(pose.x - rollPivot.x, pose.y + 1 - rollPivot.y, pose.z - rollPivot.z);
   if (transformation) profiler.measure('transformAnimation', () => { transformation.update(pose.transform); flightRig.update(pose.flight); });
   if (propeller) { propellerAngle += dt * pose.flight * (18 + Math.abs(pose.speed) * .45); propeller.rotation.z = propellerAngle; }
@@ -790,6 +908,13 @@ function render(dt) {
   if (Math.abs(camera.fov - nextFov) > 1e-6) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
   sky.position.copy(camera.position);
   clouds.update(camera);
+  // From the air, see further: fog recedes onto the horizon terrain tier as
+  // the camera climbs, and the near plane moves out to keep depth precision.
+  const aloft = smoothstep(40, 320, camera.position.y - world.surface(camera.position.x, camera.position.z));
+  scene.fog.near = fogUniforms.uFogNear.value = 350 + aloft * 900;
+  scene.fog.far = fogUniforms.uFogFar.value = 1450 + aloft * 2900;
+  const near = cameraMode === 2 && running ? .1 : .1 + aloft * 1.4;
+  if (Math.abs(camera.near - near) > .02) { camera.near = near; camera.updateProjectionMatrix(); }
   sun.position.set(pose.x - 65, pose.y + 100, pose.z + 45); sun.target.position.copy(car.position); sun.target.updateMatrixWorld();
   profiler.measure('waterUpdate', () => waterSystem.update(world, pose, dt));
   if (audio && running) {
@@ -874,5 +999,6 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   }
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
-  return { flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.mesh.count ?? 0), 0);
+  return { horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };

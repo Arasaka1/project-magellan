@@ -986,3 +986,22 @@ body.touch #mapPanel { bottom:113px; }
 @media(max-height:600px) {
   body.touch #dashboard { bottom:104px; }
 }
+
+/* Flight keys replace the driving hint while the wings are out. */
+#flightHint {
+  position:fixed;
+  bottom:39px;
+  left:50%;
+  transform:translateX(-50%);
+  display:none;
+  gap:16px;
+  z-index:4;
+  white-space:nowrap;
+  font-size:10px;
+  color:var(--faint);
+}
+#flightHint kbd { margin-right:6px; }
+body.plane-mode #flightHint { display:flex; }
+body.plane-mode #driveHint, body.touch #flightHint { display:none!important; }
+@media(max-width:800px) { #flightHint { bottom:25px; font-size:9px; gap:12px; } }
+@media(max-width:700px) { #flightHint { display:none!important; } }

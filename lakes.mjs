@@ -116,6 +116,11 @@ export function createLakes(seed, baseHeight, roadAt) {
         if (pond && Math.hypot(pond.x - x, pond.z - z) < radius + Math.max(pond.rx, pond.rz)) result.push(pond);
       }
     }
+    return result.concat(seasNear(x, z, radius));
+  }
+  // Seas only: cheap enough to search out to the far horizon when flying.
+  function seasNear(x, z, radius) {
+    const result = [];
     for (let cx = Math.floor((x - radius - 1400) / SEA_SPACING); cx <= Math.floor((x + radius + 1400) / SEA_SPACING); cx++) {
       for (let cz = Math.floor((z - radius - 1400) / SEA_SPACING); cz <= Math.floor((z + radius + 1400) / SEA_SPACING); cz++) {
         const sea = seaAtCell(cx, cz);
@@ -124,7 +129,7 @@ export function createLakes(seed, baseHeight, roadAt) {
     }
     return result;
   }
-  return { carve, lakeAt, near, starter: pondAtCell(0, 0), starterSea: seaAtCell(0, -1) };
+  return { carve, lakeAt, near, seasNear, starter: pondAtCell(0, 0), starterSea: seaAtCell(0, -1) };
 }
 
 export function waterWave(x, z, time) {

@@ -1,14 +1,15 @@
 import * as THREE from './vendor/three.module.js';
-import { GRID, hash, smoothstep } from './world.mjs?v=flight-1';
-import { lakeRadius } from './lakes.mjs?v=flight-1';
+import { GRID, hash, smoothstep } from './world.mjs?v=physics-1';
+import { lakeRadius } from './lakes.mjs?v=physics-1';
 export function createTerrain(world) {
   const seed = world.seed;
   const groundColors = { grass: new THREE.Color('#7e9059'), sand: new THREE.Color('#d9b873'), lush: new THREE.Color('#536e48'), dry: new THREE.Color('#b2a477'), rock: new THREE.Color('#8e9385'), snow: new THREE.Color('#dddeda') };
   const tmpColor = new THREE.Color();
-  const coarseSamples = new Map();
+  // Far (24 m) and horizon (96 m) samples are revisited by neighbouring tiles.
+  const sampleCaches = { 24: new Map(), 96: new Map() };
   function terrainSample(x, z, step) {
-    const key = `${x},${z}`;
-    if (step === 24 && coarseSamples.has(key)) return coarseSamples.get(key);
+    const key = `${x},${z}`, cache = sampleCaches[step];
+    if (cache?.has(key)) return cache.get(key);
     const h = world.height(x, z), delta = step / 2;
     const gx = (world.height(x + delta, z) - world.height(x - delta, z)) / step;
     const gz = (world.height(x, z + delta) - world.height(x, z - delta)) / step;
@@ -21,27 +22,30 @@ export function createTerrain(world) {
     const lake = world.lakeAt?.(x, z);
     if (lake) tmpColor.lerp(groundColors.sand, (1 - smoothstep(.5, 3.8, h - lake.level)) * (1 - smoothstep(1.05, lake.sea ? 1.3 : 1.4, lakeRadius(lake, x, z))) * .84);
     const sample = { height: h, normal: [-gx / length, 1 / length, -gz / length], color: [tmpColor.r, tmpColor.g, tmpColor.b] };
-    if (step === 24) {
-      if (coarseSamples.size >= 30000) coarseSamples.delete(coarseSamples.keys().next().value);
-      coarseSamples.set(key, sample);
+    if (cache) {
+      if (cache.size >= 30000) cache.delete(cache.keys().next().value);
+      cache.set(key, sample);
     }
     return sample;
   }
-  function coarseSample(x, z) {
-    const ix = Math.floor(x / 24) * 24, iz = Math.floor(z / 24) * 24;
-    const u = (x - ix) / 24, v = (z - iz) / 24;
-    const corners = u + v <= 1 ? [[ix, iz, 1-u-v], [ix+24, iz, u], [ix, iz+24, v]]
-      : [[ix+24, iz+24, u+v-1], [ix, iz+24, 1-u], [ix+24, iz, 1-v]];
+  // The surface a coarser tier actually draws: its grid triangles, split the
+  // same way as the rendered index buffers (u + v <= 1).
+  function gridSample(x, z, step) {
+    const ix = Math.floor(x / step) * step, iz = Math.floor(z / step) * step;
+    const u = (x - ix) / step, v = (z - iz) / step;
+    const corners = u + v <= 1 ? [[ix, iz, 1-u-v], [ix+step, iz, u], [ix, iz+step, v]]
+      : [[ix+step, iz+step, u+v-1], [ix, iz+step, 1-u], [ix+step, iz, 1-v]];
     const result = { height: 0, normal: [0,0,0], color: [0,0,0] };
     for (const [px, pz, weight] of corners) {
-      const sample = terrainSample(px, pz, 24);
+      const sample = terrainSample(px, pz, step);
       result.height += sample.height * weight;
       for (let i=0; i<3; i++) { result.normal[i] += sample.normal[i]*weight; result.color[i] += sample.color[i]*weight; }
     }
     return result;
   }
+  const coarseSample = (x, z) => gridSample(x, z, 24), ultraSample = (x, z) => gridSample(x, z, 96);
   function terrainGeometry(wx, wz, size, step, exclude = null) {
-    const positions = [], colors = [], normals = [], indices = [], coarseHeights = [], coarseNormals = [], coarseColors = [];
+    const positions = [], colors = [], normals = [], indices = [], coarseHeights = [], coarseNormals = [], coarseColors = [], ultraHeights = [];
     const n = Math.round(size / step);
     for (let iz = 0; iz <= n; iz++) for (let ix = 0; ix <= n; ix++) {
       const x = wx + ix * step, z = wz + iz * step, h = world.height(x, z);
@@ -50,6 +54,8 @@ export function createTerrain(world) {
       normals.push(...fine.normal); colors.push(...fine.color);
       const distant = step === GRID ? coarseSample(x, z) : fine;
       coarseHeights.push(distant.height); coarseNormals.push(...distant.normal); coarseColors.push(...distant.color);
+      // Far tiles blend toward the horizon tier's surface before meeting it.
+      ultraHeights.push(step === 24 ? ultraSample(x, z).height : distant.height);
     }
     for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) {
       const x = wx + (ix + .5) * step, z = wz + (iz + .5) * step;
@@ -57,7 +63,7 @@ export function createTerrain(world) {
       const a = iz * (n + 1) + ix, b = a + 1, c = a + n + 1, d = c + 1;
       indices.push(a, c, b, b, c, d);
     }
-    return { position: new Float32Array(positions), normal: new Float32Array(normals), color: new Float32Array(colors), index: new Uint32Array(indices), coarseHeight: new Float32Array(coarseHeights), coarseNormal: new Float32Array(coarseNormals), coarseColor: new Float32Array(coarseColors) };
+    return { position: new Float32Array(positions), normal: new Float32Array(normals), color: new Float32Array(colors), index: new Uint32Array(indices), coarseHeight: new Float32Array(coarseHeights), coarseNormal: new Float32Array(coarseNormals), coarseColor: new Float32Array(coarseColors), ultraHeight: new Float32Array(ultraHeights) };
   }
-  return { build: terrainGeometry, coarseSample };
+  return { build: terrainGeometry, coarseSample, ultraSample };
 }

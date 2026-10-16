@@ -1,8 +1,8 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=flight-1';
-import { stepAmphibious } from './amphibious-motion.mjs?v=flight-1';
+import { createLakes, lakeRadius } from './lakes.mjs?v=physics-1';
+import { stepAmphibious } from './amphibious-motion.mjs?v=physics-1';
 import { controlAxis } from './controls.mjs?v=slider-1';
-import { stepFlight } from './flight-motion.mjs?v=flight-1';
+import { stepFlight } from './flight-motion.mjs?v=physics-1';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;
@@ -199,7 +199,7 @@ export function createWorld(seed) {
     }
     return list.filter(p => !brokenProps.has(p.id));
   }
-  return { seed, phase, height, surface, gradient, mountainAt, woodlandAt, desertAt, roadCenter, roadAt, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
+  return { seed, phase, height, surface, gradient, mountainAt, woodlandAt, desertAt, roadCenter, roadAt, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, seasNear: lakes.seasNear, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
 }
 
 export function featureLocal(feature, x, z) {
@@ -220,7 +220,7 @@ export function groundAt(world, x, z, heading) {
 export function createVehicle(world, x = 0, z = 0, heading = 0) {
   const g = groundAt(world, x, z, heading);
   const water = world.waterAt?.(x, z), floating = Boolean(water && water.depth > .9);
-  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0 };
+  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, throttleLevel: 0, alpha: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
 }
 export function resolveObstacles(car, obstacles, world) {
   for (let pass = 0; pass < 3; pass++) for (const o of obstacles) {

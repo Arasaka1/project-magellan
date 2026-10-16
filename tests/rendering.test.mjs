@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from '../vendor/three.module.js';
 import { cloneOwnedGeometry } from '../scenery.mjs';
 import { createTerrain } from '../terrain.mjs';
-import { farIndices } from '../streaming-layout.mjs';
+import { farIndices, ultraIndices, ultraCoverage, FAR_SIZE, ULTRA_SIZE, FAR_VIEW, ULTRA_BLEND_END } from '../streaming-layout.mjs';
 import { createWorld } from '../world.mjs';
 
 test('chunk geometry owns its metadata and instance attributes independently', () => {
@@ -52,4 +52,25 @@ test('debris remains bounded, falls onto terrain, expires and clears on world re
   for (let i = 0; i < 150; i++) debris.update(1 / 60, { surface: () => 0 });
   assert.equal(debris.count, 0); assert.equal(scene.children[0].count, 0);
   debris.burst(prop); debris.clear(); assert.equal(debris.count, 0); assert.equal(scene.children[0].count, 0);
+});
+
+test('horizon tiles cut out loaded far tiles, and far tiles meet them with identical heights', () => {
+  assert.equal(ultraIndices(0, 0, () => false).length, 16 * 16 * 6);
+  assert.equal(ultraIndices(-1, 2, (fx, fz) => fx === -4 && fz === 8).length, (256 - 16) * 6);
+  assert.equal(ultraCoverage(0, 0, (fx, fz) => fx === 3 && fz === 3), 1 << 15);
+  // The blend to horizon heights completes before the far tiles end.
+  assert.ok(ULTRA_BLEND_END < FAR_VIEW * FAR_SIZE);
+  const world = createWorld(100003), terrain = createTerrain(world);
+  const horizon = terrain.build(0, 0, ULTRA_SIZE, 96), far = terrain.build(FAR_SIZE, 0, FAR_SIZE, 24);
+  // Along the far tile's whole outline, its fully blended height is the
+  // horizon tile's own triangle surface: no cracks between the tiers.
+  const ultraAt = (x, z) => terrain.ultraSample(x, z).height;
+  for (let k = 0; k <= 16; k++) for (const [ix, iz] of [[k, 0], [k, 16], [0, k], [16, k]]) {
+    const i = iz * 17 + ix, x = FAR_SIZE + ix * 24, z = iz * 24;
+    assert.ok(Math.abs(far.ultraHeight[i] - ultraAt(x, z)) < 1e-4);
+  }
+  for (let iz = 0; iz <= 16; iz++) for (let ix = 0; ix <= 16; ix++) {
+    assert.equal(horizon.position[(iz * 17 + ix) * 3 + 1], Math.fround(world.height(ix * 96, iz * 96)));
+    assert.ok(Math.abs(ultraAt(ix * 96, iz * 96) - world.height(ix * 96, iz * 96)) < 1e-4);
+  }
 });

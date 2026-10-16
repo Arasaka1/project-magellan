@@ -38,7 +38,8 @@ test('late lake results are rejected and discarded lake geometry is disposed', (
   const next = pending[0], nextData = buildWaterData(world, next);
   water.clear();
   assert.equal(water.install(next, nextData), false); assert.equal(water.count, 0);
-  assert.equal(scene.children.length, 1, 'only the reusable wake pool remains');
+  assert.deepEqual(scene.children.map(o => o.name).sort(), ['Distant water', 'Wakes'], 'only the reusable wake pool and distant water remain');
+  assert.equal(scene.getObjectByName('Distant water').geometry.getAttribute('position'), undefined);
 });
 
 test('worker water keeps the terrain grid, winding, depth and embedded typed arrays', () => {
@@ -61,7 +62,7 @@ test('worker water keeps the terrain grid, winding, depth and embedded typed arr
 });
 
 test('dry driving avoids updating unused wake buffers', () => {
-  const scene = new Scene(), water = createWater(scene), wakes = scene.children[0];
+  const scene = new Scene(), water = createWater(scene), wakes = scene.getObjectByName('Wakes');
   const pose = { x: 0, z: 0, y: 0, heading: 0, speed: 30, transform: 0, time: 0 };
   for (let i = 0; i < 120; i++) { pose.time += 1 / 60; water.update({ waterAt: () => null }, pose, 1 / 60); }
   assert.equal(wakes.count, 0); assert.equal(wakes.instanceMatrix.version, 0);

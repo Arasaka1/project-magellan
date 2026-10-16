@@ -1,23 +1,29 @@
 import * as THREE from 'three';
-import { waterWave } from './lakes.mjs?v=flight-1';
+import { waterWave } from './lakes.mjs?v=physics-1';
 
-export function createWater(scene) {
+export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { value: 1450 } }, streamCenter = { value: new THREE.Vector2() }) {
   const patches = new Map();
   let wanted = new Map();
   const time = { value: 0 };
   const material = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.FrontSide,
-    uniforms: { uTime: time, uShallow: { value: new THREE.Color('#559e9b') }, uDeep: { value: new THREE.Color('#214f64') }, uSky: { value: new THREE.Color('#b9cdd0') } },
+    uniforms: { uTime: time, uStreamCenter: streamCenter, uFogNear: fog.uFogNear, uFogFar: fog.uFogFar, uShallow: { value: new THREE.Color('#559e9b') }, uDeep: { value: new THREE.Color('#214f64') }, uSky: { value: new THREE.Color('#b9cdd0') } },
     vertexShader: `attribute float bedDepth; attribute vec2 lakeUV;
       uniform float uTime; varying vec3 vWorld; varying float vDepth; varying vec2 vLake;
+      attribute vec2 groundY; uniform vec2 uStreamCenter;
       void main(){
         vec3 p=position;
         float wave=sin(p.x*.11+p.z*.07+uTime*1.6)*.045+sin(p.x*-.06+p.z*.14-uTime*1.2)*.025;
         p.y+=wave*smoothstep(0.,1.,bedDepth);
+        // Coarse terrain tiers barely dip into a small pond's basin. Ride just
+        // above whichever tier is drawn here, so distant water is never buried
+        // and never fills in suddenly as the finer terrain arrives.
+        float d=distance(p.xz,uStreamCenter);
+        p.y=mix(mix(p.y,max(p.y,groundY.x+.3),smoothstep(220.,360.,d)),max(p.y,groundY.y+.3),smoothstep(1150.,1450.,d));
         vWorld=p;vDepth=bedDepth;vLake=lakeUV;
         gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
       }`,
-    fragmentShader: `uniform float uTime; uniform vec3 uShallow,uDeep,uSky;
+    fragmentShader: `uniform float uTime; uniform float uFogNear,uFogFar; uniform vec3 uShallow,uDeep,uSky;
       varying vec3 vWorld; varying float vDepth; varying vec2 vLake;
       void main(){
         if(vDepth<.015||length(vLake)>1.02)discard;
@@ -36,8 +42,11 @@ export function createWater(scene) {
         color=mix(color,uSky,fresnel*.58)+ripple+vec3(.8,.84,.7)*glint*.55;
         float edge=(1.-smoothstep(.15,.9,vDepth))*(.45+.3*sin(p.x*.7+p.y*.6-uTime*2.));
         color=mix(color,vec3(.7,.83,.76),edge*.65);
-        color=mix(color,uSky,smoothstep(350.,1450.,distance(cameraPosition,vWorld)));
-        gl_FragColor=vec4(color,mix(.75,.97,smoothstep(0.,1.8,vDepth)));
+        color=mix(color,uSky,smoothstep(uFogNear,uFogFar,distance(cameraPosition,vWorld)));
+        // Close up, shallows show the bed. Further away the terrain beneath is
+        // a coarse tier just under the surface (sand-coloured near shores), so
+        // the water turns opaque instead of revealing it.
+        gl_FragColor=vec4(color,mix(mix(.75,.97,smoothstep(0.,1.8,vDepth)),1.,smoothstep(200.,400.,far)));
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`
@@ -50,16 +59,44 @@ export function createWater(scene) {
     geometry.setAttribute('position', new THREE.BufferAttribute(data.position, 3));
     geometry.setAttribute('bedDepth', new THREE.BufferAttribute(data.bedDepth, 1));
     geometry.setAttribute('lakeUV', new THREE.BufferAttribute(data.lakeUV, 2));
+    geometry.setAttribute('groundY', new THREE.BufferAttribute(data.groundY, 2));
     geometry.setIndex(new THREE.BufferAttribute(data.index, 1)); geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, material); mesh.name = lake.name; mesh.renderOrder = 1;
-    scene.add(mesh); patches.set(lake.id, mesh);
+    scene.add(mesh); patches.set(lake.id, mesh); refreshDistant();
     return true;
   }
   function sync(world, x, z) {
     const lakes = world.lakesNear(x, z, 1000);
     wanted = new Map(lakes.map(l => [l.id, l]));
-    for (const [id, mesh] of patches) if (!wanted.has(id)) { scene.remove(mesh); mesh.geometry.dispose(); patches.delete(id); }
+    let removed = false;
+    for (const [id, mesh] of patches) if (!wanted.has(id)) { scene.remove(mesh); mesh.geometry.dispose(); patches.delete(id); removed = true; }
+    if (removed) refreshDistant();
     return lakes.filter(lake => !patches.has(lake.id));
+  }
+  // Beyond the detailed patches, every lake and sea out to the far horizon is
+  // one worker-built mesh. Each lake's part is dropped from the index while
+  // its detailed patch is installed, so the two never overlap or leave a gap.
+  const distant = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  distant.renderOrder = 1; distant.frustumCulled = false; distant.name = 'Distant water'; scene.add(distant);
+  let distantRanges = [], distantIndex = null, distantCount = 0;
+  function refreshDistant() {
+    if (!distantIndex) return;
+    const visible = distantRanges.filter(range => !patches.has(range.id));
+    const index = new Uint32Array(visible.reduce((n, range) => n + range.count, 0));
+    let at = 0;
+    for (const range of visible) { index.set(distantIndex.subarray(range.start, range.start + range.count), at); at += range.count; }
+    distant.geometry.setIndex(new THREE.BufferAttribute(index, 1));
+    distantCount = visible.length;
+  }
+  function installDistant(data, ranges) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(data.position, 3));
+    geometry.setAttribute('bedDepth', new THREE.BufferAttribute(data.bedDepth, 1));
+    geometry.setAttribute('lakeUV', new THREE.BufferAttribute(data.lakeUV, 2));
+    geometry.setAttribute('groundY', new THREE.BufferAttribute(data.groundY, 2));
+    distant.geometry.dispose(); distant.geometry = geometry;
+    distantRanges = ranges; distantIndex = data.index;
+    refreshDistant();
   }
   const capacity = 80, ripples = [], dummy = new THREE.Object3D();
   const wakeGeometry = new THREE.RingGeometry(.85, 1, 28).rotateX(-Math.PI / 2);
@@ -73,7 +110,7 @@ export function createWater(scene) {
       #include <colorspace_fragment>
     }`
   });
-  const wakes = new THREE.InstancedMesh(wakeGeometry, wakeMaterial, capacity); wakes.frustumCulled = false; wakes.count = 0; wakes.renderOrder = 2; scene.add(wakes);
+  const wakes = new THREE.InstancedMesh(wakeGeometry, wakeMaterial, capacity); wakes.frustumCulled = false; wakes.count = 0; wakes.name = 'Wakes'; wakes.renderOrder = 2; scene.add(wakes);
   wakes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   let emission = 0;
   function update(world, pose, dt) {
@@ -96,7 +133,11 @@ export function createWater(scene) {
     wakes.count = ripples.length;
     if (ripples.length) { wakes.instanceMatrix.needsUpdate = true; wakeGeometry.attributes.wakeOpacity.needsUpdate = true; }
   }
-  function clear() { for (const mesh of patches.values()) { scene.remove(mesh); mesh.geometry.dispose(); } patches.clear(); wanted.clear(); ripples.length = 0; wakes.count = 0; emission = 0; }
-  return { sync, install, update, clear, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
+  function clear() {
+    for (const mesh of patches.values()) { scene.remove(mesh); mesh.geometry.dispose(); }
+    patches.clear(); wanted.clear(); ripples.length = 0; wakes.count = 0; emission = 0;
+    distant.geometry.dispose(); distant.geometry = new THREE.BufferGeometry(); distantRanges = []; distantIndex = null; distantCount = 0;
+  }
+  return { sync, install, update, clear, installDistant, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
     get count() { return patches.size; }, get wakeCount() { return ripples.length; } };
 }

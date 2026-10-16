@@ -222,11 +222,26 @@ test('F unfolds the wings, the car takes off, climbs, and folds them to land', a
   await expect.poll(async () => (await snapshot(page)).flight.wingsVisible).toBe(true);
   await expect(page.locator('#flyAction')).toHaveText('land');
   await expect.poll(async () => (await snapshot(page)).flight.flying, { timeout: 40000, intervals: [100] }).toBe(true);
-  await page.keyboard.down('Space');
+  // Pitch up briefly: the nose then holds its climb angle.
+  await page.keyboard.down('Space'); await page.waitForTimeout(500); await page.keyboard.up('Space');
   await expect.poll(async () => (await snapshot(page)).flight.altitude, { timeout: 40000 }).toBeGreaterThan(40);
-  await page.keyboard.up('Space');
   const climbing = await snapshot(page);
   expect(climbing.flight.wingspan).toBeGreaterThan(6); expect(climbing.flight.progress).toBe(1);
+  // The map is built for the view from the air: a horizon terrain tier,
+  // distant forests and water, and fog that recedes as the plane climbs.
+  expect(climbing.horizon.ultraTiles).toBe(49); expect(climbing.horizon.impostors).toBeGreaterThan(1000);
+  expect(climbing.horizon.distantWater).toBeGreaterThan(0);
+  await expect.poll(async () => (await snapshot(page)).horizon.fogFar, { timeout: 40000 }).toBeGreaterThan(3500);
+  // Three axes: Q/E yaw, A/D roll, and the arrows pitch.
+  const before = await snapshot(page);
+  await page.keyboard.down('KeyQ'); await page.waitForTimeout(800); await page.keyboard.up('KeyQ');
+  const yawed = await snapshot(page);
+  expect(Math.abs(yawed.vehicle.heading - before.vehicle.heading)).toBeGreaterThan(.03);
+  await page.keyboard.down('KeyD'); await page.waitForTimeout(400);
+  expect((await snapshot(page)).vehicle.roll).toBeGreaterThan(.3);
+  await page.keyboard.up('KeyD');
+  await page.keyboard.down('ArrowUp'); await page.waitForTimeout(400); await page.keyboard.up('ArrowUp');
+  expect((await snapshot(page)).vehicle.climb).toBeLessThan(yawed.vehicle.climb);
   await expect(page.locator('#gear')).toHaveText('A');
   await expect.poll(async () => (await snapshot(page)).flight.propeller).toBeGreaterThan(climbing.flight.propeller);
   await testInfo.attach('flying', { body: await page.screenshot(), contentType: 'image/png' });
