@@ -104,6 +104,9 @@ test('worker loading, actual WebGL rendering, and stationary scenery stay stable
   await expect.poll(async () => (await snapshot(page)).cameraError, { timeout: 20000 }).toBeLessThan(1e-7);
   // Pause the simulation clock so the new water ripples are stationary too.
   await page.keyboard.press('Escape');
+  // Wait for the pause menu's fade to finish: only the scene should differ.
+  // A fixed delay passed on slow SwiftShader captures but not on a real GPU.
+  await page.waitForFunction(() => document.querySelector('#menu').getAnimations().length === 0);
   await page.waitForTimeout(300);
   // The exact pixels may differ across GPUs; within one settled session they must not flicker.
   const first = await page.locator('#game canvas').screenshot();
@@ -147,7 +150,8 @@ test('trees fracture into visible sections and breaking audio respects mute', as
   await page.waitForTimeout(600);
   await testInfo.attach('tree-separating', { body: await page.screenshot(), contentType: 'image/png' });
   await page.getByRole('button', { name: 'Mute sound', exact: true }).click();
-  expect((await snapshot(page)).sound.masterGain).toBe(0);
+  // AudioParam.value updates on the next audio render quantum, not at once.
+  await expect.poll(async () => (await snapshot(page)).sound.masterGain, { timeout: 2000 }).toBe(0);
   await expect.poll(async () => (await snapshot(page)).fallingTrees, { timeout: 30000 }).toBe(0);
   await expect.poll(async () => (await snapshot(page)).sound.active, { timeout: 5000 }).toBe(0);
   expect(errors).toEqual([]);

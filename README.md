@@ -85,6 +85,8 @@ npx playwright install chromium
 npm test
 ```
 
+On macOS, browser tests render with the GPU through ANGLE Metal: about 1.5 minutes for the suite on an Apple M2. CI and other platforms use SwiftShader software rendering, which runs the game at about 4 fps and the suite in about 6 minutes. `PW_RENDERER=swiftshader npm run test:browser` reproduces CI locally; `PW_RENDERER=metal` forces the GPU.
+
 The tests cover terrain continuity, seeded regeneration, scenery clearances, challenging slopes, jump buffering and landing, 300 km/h highway top speed, automatic ramp launches across three seeds, landmark regeneration, acceleration/reverse, drift, collision escape, recovery, frame-rate independence and 24 simulated one-minute drives across eight directions and three seeds.
 
 Vehicle checks also parse the actual exported GLB to verify meter scale, wheel origins, ground contact, lamp materials, self-contained resources and geometry budgets. Browser checks exercise the imported rig's steering, wheel spin and lights, and confirm that an asset-load failure shows an error instead of starting an invisible car.
