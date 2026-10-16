@@ -1,4 +1,4 @@
-import { CHUNK } from './world.mjs?v=slider-1';
+import { CHUNK } from './world.mjs?v=flight-1';
 export const FAR_SIZE = CHUNK * 4;
 export const NEAR_VIEW = 4;
 export const FAR_VIEW = 4;

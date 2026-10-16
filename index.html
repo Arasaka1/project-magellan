@@ -7,7 +7,7 @@
   <meta name="description" content="Take the long way. An endless driving escape through a new procedural wilderness on every visit.">
   <title>Endless Drive — Take the long way</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23253d39'/%3E%3Cpath d='m10 29 8-19h4l8 19M14 23h12' fill='none' stroke='%23f3dfba' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=slider-1">
+  <link rel="stylesheet" href="style.css?v=flight-1">
   <script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
 </head>
 <body>
@@ -24,7 +24,7 @@
     <section class="intro">
       <div class="eyebrow"><span></span> A LITTLE FURTHER, EVERY TIME</div>
       <h1 id="menuTitle">Take the<br><em>long way.</em></h1>
-      <p id="menuCopy">Orange ramps launch. Purple ramps roll.<br>Find a lake. Your car becomes a boat.</p>
+      <p id="menuCopy">Orange ramps launch. Purple ramps roll.<br>Find a lake. Your car becomes a boat.<br>Press F (or FLY) and it takes to the sky.</p>
       <button id="startBtn" class="primary" disabled><span>Preparing your world</span><span aria-hidden="true">↗</span></button>
       <div id="menuStats" hidden><span><b id="runDistance">0.00</b> km this drive</span><span><b id="bestDistance">0.00</b> km personal best</span></div>
       <div id="pauseTools" hidden><button id="recoverBtn">↻ Recover car</button><button id="cameraBtn">Camera: Chase</button></div>
@@ -34,14 +34,14 @@
       <div id="loadError" hidden role="alert">The game couldn’t load. Check your connection and <button onclick="location.reload()">try again</button>.</div>
     </section>
     <div class="edition"><span>FREE ROAM / 002</span><span>Bigger jumps. Wilder terrain.<br>A new adventure in every direction.</span></div>
-    <div class="menu-controls"><span><kbd>W A S D</kbd> DRIVE</span><span><kbd>SPACE</kbd> JUMP</span><span><kbd>SHIFT</kbd> DRIFT</span><span><kbd>C</kbd> CAMERA</span></div>
+    <div class="menu-controls"><span><kbd>W A S D</kbd> DRIVE</span><span><kbd>SPACE</kbd> JUMP</span><span><kbd>SHIFT</kbd> DRIFT</span><span><kbd>F</kbd> FLY</span><span><kbd>C</kbd> CAMERA</span></div>
   </main>
   <section id="mapPanel" class="in-game" aria-label="Navigation">
     <div class="map-heading"><span>EXPLORE FREELY</span><span id="mapNorth">N ↑</span></div>
     <canvas id="minimap" width="288" height="240" aria-label="Nearby roads and terrain"></canvas>
     <div class="map-footer"><span id="coordinates">0 E · 0 N</span><span id="elevation">12 M</span></div>
   </section>
-  <div id="driveHint" class="in-game"><span><kbd id="modeKey">SPACE</kbd> <span id="modeAction">jump</span></span><span><kbd>SHIFT</kbd> <span id="brakeAction">drift</span></span><span><kbd>R</kbd> recover</span></div>
+  <div id="driveHint" class="in-game"><span><kbd id="modeKey">SPACE</kbd> <span id="modeAction">jump</span></span><span><kbd>SHIFT</kbd> <span id="brakeAction">drift</span></span><span><kbd>F</kbd> <span id="flyAction">fly</span></span><span><kbd>R</kbd> recover</span></div>
   <section id="dashboard" class="in-game" aria-label="Driving instruments">
     <div id="surfaceState">ON THE ROAD</div>
     <div class="speed-row"><span id="gear">N</span><strong id="speed">0</strong><span class="unit">KM/H</span></div>
@@ -49,7 +49,7 @@
     <div class="trip"><span>TRIP <b id="distance">0.00</b> KM</span><span id="airtime">READY TO ROAM</span></div>
   </section>
   <div id="toast" role="status" aria-live="polite"></div>
-  <div id="touch" aria-label="Touch driving controls"><div><div id="steerSlider" class="steer-slider" role="slider" aria-label="Steering: slide left or right" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><b aria-hidden="true">←</b><i></i><b aria-hidden="true">→</b></div></div><div class="touch-center"><button data-control="jump" aria-label="Jump">JUMP</button><button data-control="brake" aria-label="Drift">DRIFT</button></div><div><button data-control="down" aria-label="Brake or reverse">↓</button><button data-control="up" aria-label="Accelerate">↑</button></div></div>
+  <div id="touch" aria-label="Touch driving controls"><div><div id="steerSlider" class="steer-slider" role="slider" aria-label="Steering: slide left or right" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><b aria-hidden="true">←</b><i></i><b aria-hidden="true">→</b></div></div><div class="touch-center"><button id="flyBtn" class="fly-button" aria-label="Fly">FLY</button><button data-control="jump" aria-label="Jump">JUMP</button><button data-control="brake" aria-label="Drift">DRIFT</button></div><div><button data-control="down" aria-label="Brake or reverse">↓</button><button data-control="up" aria-label="Accelerate">↑</button></div></div>
   <script type="module" src="game.mjs?v=flight-1"></script>
   <script>window.addEventListener('error',()=>{if(document.querySelector('#startBtn').disabled)document.querySelector('#loadError').hidden=false;});</script>
 </body>

@@ -1,4 +1,4 @@
-import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=slider-1';
+import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=flight-1';
 
 export const GRASS_GRID = 40;
 export const MAX_GRASS_PER_CHUNK = GRASS_GRID * GRASS_GRID;

@@ -1,6 +1,6 @@
 // Keep render motion continuous between fixed simulation ticks. The camera and
 // car share this pose; neither follows a different point on the physics clock.
-const linear = ['x', 'y', 'z', 'speed', 'steer', 'impact', 'groundY', 'transform', 'time', 'waterDepth'];
+const linear = ['x', 'y', 'z', 'speed', 'steer', 'impact', 'groundY', 'transform', 'flight', 'time', 'waterDepth'];
 const angular = ['heading', 'pitch', 'roll'];
 const angleDelta = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 
@@ -9,7 +9,7 @@ export function createVehiclePresentation(vehicle, supportAt = null) {
   function copy(target, source) {
     for (const key of linear) target[key] = source[key];
     for (const key of angular) target[key] = source[key];
-    target.grounded = source.grounded;
+    target.grounded = source.grounded; target.flying = source.flying;
   }
   function reset(next) {
     copy(current, next); copy(previous, next);
@@ -18,7 +18,7 @@ export function createVehiclePresentation(vehicle, supportAt = null) {
   }
   function advance(next, dt) {
     copy(previous, current); previous.wheelAngle = current.wheelAngle;
-    copy(current, next); current.wheelAngle += next.speed * dt / .57 * (1 - next.transform);
+    copy(current, next); current.wheelAngle += next.flying ? 0 : next.speed * dt / .57 * (1 - next.transform);
   }
   function sample(alpha) {
     alpha = Math.min(1, Math.max(0, alpha));

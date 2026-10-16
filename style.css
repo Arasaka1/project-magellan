@@ -964,3 +964,25 @@ body.touch p.touch-only { display:block!important; }
   #touchGuide { display:none!important; }
   #settingsRow { margin-top:10px; }
 }
+
+/* FLY sits above Jump and Drift and toggles the plane form. */
+#touch .touch-center { display:grid; grid-template-columns:auto auto; }
+#touch .touch-center .fly-button {
+  grid-column:1 / span 2;
+  width:auto!important;
+  height:30px;
+  border-radius:9px;
+  font-size:9px;
+  letter-spacing:.14em;
+  color:var(--yellow);
+  border-color:rgba(233,201,138,.45);
+}
+body.touch #dashboard { bottom:118px; }
+body.touch #mapPanel { bottom:113px; }
+@media(max-width:700px) {
+  #dashboard,body.touch #dashboard,#mapPanel,body.touch #mapPanel { bottom:118px; }
+  #touch .touch-center .fly-button { height:28px; }
+}
+@media(max-height:600px) {
+  body.touch #dashboard { bottom:104px; }
+}

@@ -214,6 +214,31 @@ test('keyboard jump, driving across chunks, recovery, and new-world reset', asyn
   expect(errors).toEqual([]);
 });
 
+test('F unfolds the wings, the car takes off, climbs, and folds them to land', async ({ page }, testInfo) => {
+  test.setTimeout(150000);
+  const errors = await openGame(page, 3);
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
+  await page.keyboard.down('KeyW'); await page.keyboard.press('KeyF');
+  await expect.poll(async () => (await snapshot(page)).flight.wingsVisible).toBe(true);
+  await expect(page.locator('#flyAction')).toHaveText('land');
+  await expect.poll(async () => (await snapshot(page)).flight.flying, { timeout: 40000, intervals: [100] }).toBe(true);
+  await page.keyboard.down('Space');
+  await expect.poll(async () => (await snapshot(page)).flight.altitude, { timeout: 40000 }).toBeGreaterThan(40);
+  await page.keyboard.up('Space');
+  const climbing = await snapshot(page);
+  expect(climbing.flight.wingspan).toBeGreaterThan(6); expect(climbing.flight.progress).toBe(1);
+  await expect(page.locator('#gear')).toHaveText('A');
+  await expect.poll(async () => (await snapshot(page)).flight.propeller).toBeGreaterThan(climbing.flight.propeller);
+  await testInfo.attach('flying', { body: await page.screenshot(), contentType: 'image/png' });
+  await page.keyboard.up('KeyW'); await page.keyboard.press('KeyF');
+  await expect.poll(async () => (await snapshot(page)).flight.flying, { timeout: 90000 }).toBe(false);
+  await expect.poll(async () => (await snapshot(page)).flight.wingsVisible, { timeout: 10000 }).toBe(false);
+  const landed = await snapshot(page);
+  expect(landed.flight.mode).toBe(false); expect(landed.vehicle.flights).toBe(1);
+  expect(landed.vehicle.flightDistance).toBeGreaterThan(200);
+  expect(errors).toEqual([]);
+});
+
 test.describe('mobile Chrome controls', () => {
   test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 390, height: 844 } });
 test('graphics presets cycle, and the steering slider replaces the arrow buttons', async ({ page }, testInfo) => {
@@ -263,6 +288,13 @@ test('graphics presets cycle, and the steering slider replaces the arrow buttons
   await touch('touchEnd', []);
   await expect.poll(async () => (await snapshot(page)).controls.steer).toBe(null);
   expect((await snapshot(page)).controls.throttle).toBe(0);
+  // FLY switches to the plane form; Jump and Drift become Climb and Dive.
+  await page.getByRole('button', { name: 'Fly', exact: true }).tap();
+  await expect.poll(async () => (await snapshot(page)).flight.mode).toBe(true);
+  await expect(page.getByRole('button', { name: 'Climb', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Dive', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Land', exact: true }).tap();
+  await expect.poll(async () => (await snapshot(page)).flight.mode).toBe(false);
   expect(errors).toEqual([]);
 });
 test('a second world request cancels old work and touch controls still jump', async ({ page }) => {
