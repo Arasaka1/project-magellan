@@ -80,7 +80,7 @@ function startFlying(car, climb) {
   car.airspeed = Math.hypot(horizontal, car.vy);
   const angle = climb ?? clamp(Math.atan2(car.vy, Math.max(horizontal, 1)), -.5, .5);
   setAttitude(car, attitudeFromEuler(car.heading, -angle, car.roll));
-  car.climb = angle; car.alpha = 0; car.throttleLevel = Math.max(car.throttleLevel, .8);
+  car.climb = angle; car.alpha = 0;
   car.sink = 0; car.coyote = 0; car.jumpBuffer = 0; car.airtime = 0; car.airDistance = 0; car.climbOut = false;
   car.flights++;
 }
@@ -116,10 +116,9 @@ function taxi(car, input, world, dt, groundAt) {
   car.speed = speed; car.airspeed = Math.abs(speed); car.time += dt;
   car.distance += Math.hypot(car.x - oldX, car.z - oldZ);
   retractHulls(car, dt);
-  car.throttleLevel = clamp(car.throttleLevel + throttle * .7 * dt, 0, 1);
   // Rotate at lift-off speed (holding Climb a little sooner): the nose comes
   // up to a flying angle of attack, and the wings take the weight.
-  if (speed > TAKEOFF_SPEED - (climbInput > 0 ? 4 : 0)) { car.throttleLevel = Math.max(car.throttleLevel, .8); startFlying(car, .03); car.vy = 1; rotateNose(car, -.16); }
+  if (speed > TAKEOFF_SPEED - (climbInput > 0 ? 4 : 0)) { startFlying(car, .03); car.vy = 1; rotateNose(car, -.16); }
   return true;
 }
 
@@ -155,8 +154,6 @@ function land(car, ground, water) {
 
 function fly(car, input, world, dt, groundAt) {
   const { throttle, pitch, roll, yaw } = flightAxes(input);
-  // W/S move a throttle lever; it stays where it is left.
-  car.throttleLevel = clamp(car.throttleLevel + throttle * .7 * dt, 0, 1);
   const wings = car.flight, oldX = car.x, oldZ = car.z;
   const below = groundAt(world, car.x, car.z, car.heading).y;
   let q = [car.qx, car.qy, car.qz, car.qw];
@@ -171,8 +168,9 @@ function fly(car, input, world, dt, groundAt) {
   // it pulls toward the ground. Loads are limited to about 5 g.
   const across = mast.map((c, k) => c - dir[k] * dot(mast, dir)), length = Math.hypot(...across) || 1;
   const lift = clamp(LIFT * pressure * cl, -MAX_LOAD, MAX_LOAD);
-  const thrust = MAX_THRUST * car.throttleLevel * rho * (.4 + .6 * wings);
-  const drag = (DRAG + INDUCED * cl * cl) * pressure, slip = SIDE * pressure * beta;
+  // Thrust only while W is held; S opens air brakes. Hands off, it glides.
+  const thrust = MAX_THRUST * Math.max(0, throttle) * rho * (.4 + .6 * wings);
+  const drag = (DRAG * (1 + 2.5 * Math.max(0, -throttle)) + INDUCED * cl * cl) * pressure, slip = SIDE * pressure * beta;
   for (let k = 0; k < 3; k++) v[k] += (nose[k] * thrust + across[k] / length * lift - dir[k] * drag - wing[k] * slip + (k === 1 ? -9.8 : 0)) * dt;
   const fast = Math.hypot(...v); if (fast > NEVER_EXCEED) for (let k = 0; k < 3; k++) v[k] *= NEVER_EXCEED / fast;
   // Controls: body-axis rates. Their bite grows with airspeed and air density.

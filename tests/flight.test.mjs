@@ -15,7 +15,7 @@ const mastUp = car => rotate(q(car), [0, 1, 0])[1], noseUp = car => rotate(q(car
 // Level flight 300 m above the ground at 80 m/s, well clear of the assists.
 function high(car, speed = 80) {
   [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(car.heading, 0, 0);
-  Object.assign(car, { pitch: 0, roll: 0, climb: 0, airspeed: speed, throttleLevel: .8, y: world.surface(car.x, car.z) + 300,
+  Object.assign(car, { pitch: 0, roll: 0, climb: 0, airspeed: speed, y: world.surface(car.x, car.z) + 300,
     vx: Math.sin(car.heading) * speed, vy: 0, vz: Math.cos(car.heading) * speed });
   return car;
 }
@@ -71,7 +71,16 @@ test('upright and hands off it holds its height; upside down it falls', () => {
   run(flipped, { rollLeft: true }, 1.43);
   assert.ok(mastUp(flipped) < -.8, `inverted ${mastUp(flipped)}`);
   run(flipped, {}, 3);
-  assert.ok(top - flipped.y > 80, `fell ${top - flipped.y} m`); assert.ok(flipped.climb < -.3, 'nose dropping toward the ground');
+  assert.ok(top - flipped.y > 50, `fell ${top - flipped.y} m`); assert.ok(flipped.climb < -.3, 'nose dropping toward the ground');
+});
+
+test('there is no thrust unless W is held: hands off it glides and slows, and S brakes harder', () => {
+  const coast = high(airborne(), 70), brake = high(airborne(), 70), power = high(airborne(), 70);
+  let fastest = 0;
+  run(coast, {}, 5, c => { fastest = Math.max(fastest, c.airspeed); });
+  run(brake, { down: true }, 5); run(power, { up: true }, 5);
+  assert.ok(fastest <= 70.5 && coast.airspeed < 66, `coasting ${coast.airspeed}, peak ${fastest}`);
+  assert.ok(brake.airspeed < coast.airspeed - 3 && power.airspeed > 75, `brake ${brake.airspeed}, power ${power.airspeed}`);
 });
 
 test('a bank alone barely turns; banking and pulling turns hard', () => {
@@ -115,7 +124,6 @@ test('yaw swings the nose without much bank', () => {
 
 test('idle power and a pull stall the wing; the nose drops and power recovers it; thin air caps the climb', () => {
   const car = high(airborne(), 60);
-  car.throttleLevel = 0;
   let peakAlpha = 0, lowestPath = 1;
   run(car, { down: true, pitchUp: true }, 6, c => { peakAlpha = Math.max(peakAlpha, c.alpha); });
   run(car, { down: true }, 6, c => { lowestPath = Math.min(lowestPath, c.climb); });

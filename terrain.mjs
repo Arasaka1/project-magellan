@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.js';
-import { GRID, hash, smoothstep } from './world.mjs?v=physics-1';
+import { GRID, hash, smoothstep } from './world.mjs?v=physics-2';
 import { lakeRadius } from './lakes.mjs?v=physics-1';
 export function createTerrain(world) {
   const seed = world.seed;
