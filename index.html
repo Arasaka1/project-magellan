@@ -7,7 +7,7 @@
   <meta name="description" content="Take the long way. An endless driving escape through a new procedural wilderness on every visit.">
   <title>Endless Drive — Take the long way</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23253d39'/%3E%3Cpath d='m10 29 8-19h4l8 19M14 23h12' fill='none' stroke='%23f3dfba' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=controls-1">
+  <link rel="stylesheet" href="style.css?v=sticks-1">
   <script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
 </head>
 <body>
@@ -28,7 +28,7 @@
       <button id="startBtn" class="primary" disabled><span>Preparing your world</span><span aria-hidden="true">↗</span></button>
       <div id="menuStats" hidden><span><b id="runDistance">0.00</b> km this drive</span><span><b id="bestDistance">0.00</b> km personal best</span></div>
       <div id="pauseTools" hidden><button id="recoverBtn">↻ Recover car</button><button id="cameraBtn">Camera: Chase</button></div>
-      <div id="settingsRow"><button id="qualityBtn" title="Graphics quality">Graphics: Auto</button><button id="steeringBtn" class="touch-only" title="Touch steering">Steering: Joystick</button><label class="touch-only stick-only">Sensitivity <input id="sensitivity" type="range" min="50" max="150" step="10" value="100" aria-label="Joystick steering sensitivity"><output id="sensitivityValue">100%</output></label></div>
+      <div id="settingsRow"><button id="qualityBtn" title="Graphics quality">Graphics: Auto</button><button id="steeringBtn" class="touch-only" title="Touch controls">Steering: Sticks</button><label class="touch-only stick-only">Sensitivity <input id="sensitivity" type="range" min="50" max="150" step="10" value="100" aria-label="Steering stick sensitivity"><output id="sensitivityValue">100%</output></label></div>
       <p id="touchGuide" class="touch-only"></p>
       <div class="world-row"><span>WORLD <b id="seedTxt">—</b></span><button id="newWorld" title="Generate a new world · N">↻ New world</button><button id="copySeed" aria-label="Copy world link" title="Copy world link"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2"/></svg></button></div>
       <div id="loadError" hidden role="alert">The game couldn’t load. Check your connection and <button onclick="location.reload()">try again</button>.</div>
@@ -49,10 +49,11 @@
     <div class="trip"><span>TRIP <b id="distance">0.00</b> KM</span><span id="airtime">READY TO ROAM</span></div>
   </section>
   <div id="toast" role="status" aria-live="polite"></div>
-  <div id="stickZone" aria-label="Joystick: drag to steer and accelerate"><div id="stick" aria-hidden="true"><i></i></div></div>
+  <div id="speedZone" class="stick-zone" aria-label="Speed stick: push up to accelerate, pull down to brake"><div class="stick vertical" aria-hidden="true"><i></i></div></div>
+  <div id="steerZone" class="stick-zone" aria-label="Steering stick: slide left or right to steer"><div class="stick horizontal" aria-hidden="true"><i></i></div></div>
   <div id="coach" aria-hidden="true"><span id="coachText"></span></div>
   <div id="touch" aria-label="Touch driving controls"><div><button data-control="left" aria-label="Steer left">←</button><button data-control="right" aria-label="Steer right">→</button></div><div class="touch-center"><button data-control="jump" aria-label="Jump">JUMP</button><button data-control="brake" aria-label="Drift">DRIFT</button></div><div><button data-control="down" aria-label="Brake or reverse">↓</button><button data-control="up" aria-label="Accelerate">↑</button></div></div>
-  <script type="module" src="game.mjs?v=controls-1"></script>
+  <script type="module" src="game.mjs?v=sticks-1"></script>
   <script>window.addEventListener('error',()=>{if(document.querySelector('#startBtn').disabled)document.querySelector('#loadError').hidden=false;});</script>
 </body>
 </html>

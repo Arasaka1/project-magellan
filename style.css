@@ -922,51 +922,59 @@ header,#compass {
 body.touch .touch-only:not(.stick-only), body.touch.stick-controls .stick-only { display:flex!important; }
 body.touch p.touch-only { display:block!important; }
 
-/* Floating joystick in the lower left, beneath the right-hand action buttons. */
-#stickZone {
+/* Twin fixed sticks: speed in the left half, steering in the right half,
+   with Jump and Drift stacked between them. */
+.stick-zone {
   display:none;
   position:fixed;
-  left:0;
   bottom:0;
-  width:52%;
+  width:50%;
   height:58%;
   z-index:5;
   touch-action:none;
   user-select:none;
   -webkit-user-select:none;
 }
-body.touch.driving.stick-controls #stickZone { display:block; }
-#stick {
-  position:fixed;
-  left:calc(96px + env(safe-area-inset-left));
-  top:calc(100% - 100px - env(safe-area-inset-bottom));
-  width:112px;
-  height:112px;
-  margin:-56px 0 0 -56px;
-  border-radius:50%;
-  border:1px solid var(--line);
-  background:rgba(25,44,36,.3);
-  backdrop-filter:blur(8px);
+#speedZone { left:0; }
+#steerZone { right:0; }
+body.touch.driving.stick-controls .stick-zone { display:block; }
+.stick {
+  position:absolute;
+  bottom:calc(24px + env(safe-area-inset-bottom));
   display:grid;
   place-items:center;
-  opacity:.55;
+  border:1px solid var(--line);
+  border-radius:32px;
+  background:rgba(25,44,36,.32);
+  backdrop-filter:blur(8px);
+  opacity:.7;
   pointer-events:none;
 }
-#stick.active { opacity:1; }
-#stick i {
-  width:46px;
-  height:46px;
+.stick.vertical { left:calc(26px + env(safe-area-inset-left)); width:62px; height:132px; }
+.stick.horizontal { right:calc(14px + env(safe-area-inset-right)); width:132px; height:62px; bottom:calc(59px + env(safe-area-inset-bottom)); }
+.stick.active { opacity:1; }
+.stick i {
+  width:48px;
+  height:48px;
   border-radius:50%;
-  background:rgba(245,241,223,.78);
+  background:rgba(245,241,223,.8);
   box-shadow:0 2px 12px rgba(20,35,30,.35);
 }
-#stick.active i { background:var(--yellow); }
-body.stick-controls #touch { justify-content:flex-end; }
+.stick.active i { background:var(--yellow); }
+.stick.vertical::before, .stick.horizontal::before {
+  content:'';
+  position:absolute;
+  background:var(--line);
+}
+.stick.vertical::before { width:1px; top:14px; bottom:14px; }
+.stick.horizontal::before { height:1px; left:14px; right:14px; }
+body.stick-controls #touch { justify-content:center; }
 body.stick-controls #touch [data-control=left], body.stick-controls #touch [data-control=right],
 body.stick-controls #touch [data-control=up], body.stick-controls #touch [data-control=down] { display:none; }
-body.stick-controls #touch .touch-center { gap:10px!important; }
-body.stick-controls #touch .touch-center button { width:70px!important; height:70px!important; border-radius:50%; font-size:10px; }
-body.touch.stick-controls #mapPanel { bottom:175px; }
+body.stick-controls #touch>div:not(.touch-center) { display:none; }
+body.stick-controls #touch .touch-center { flex-direction:column-reverse; gap:10px!important; }
+body.stick-controls #touch .touch-center button { width:60px!important; height:60px!important; border-radius:50%; font-size:9px; }
+body.touch.stick-controls #mapPanel, body.touch.stick-controls #dashboard { bottom:calc(190px + env(safe-area-inset-bottom)); }
 
 /* First drive: a short hint over the controls, dismissed on first touch. */
 #coach {
@@ -988,20 +996,29 @@ body.touch.stick-controls #mapPanel { bottom:175px; }
 }
 #coach b { color:var(--yellow); font-weight:600; }
 body.touch.driving.coaching #coach { display:block; }
-body.touch.stick-controls.coaching #mapPanel { opacity:0; }
 body:not(.stick-controls) #coach { bottom:calc(92px + env(safe-area-inset-bottom)); }
+/* With sticks, the hint becomes one label above each stick. */
+body.stick-controls #coach { left:0; right:0; padding:0; border:0; background:none; backdrop-filter:none; animation:none; bottom:calc(184px + env(safe-area-inset-bottom)); }
+body.stick-controls #coachText { display:flex; justify-content:space-between; padding:0 max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left)); }
+#coachText>span { padding:8px 12px; border:1px solid rgba(233,201,138,.45); border-radius:6px; background:rgba(25,44,36,.82); backdrop-filter:blur(10px); animation:coach-pulse 1.6s ease-in-out infinite; }
+body.stick-controls.coaching #mapPanel, body.stick-controls.coaching #dashboard { opacity:0; }
 @keyframes coach-pulse { 50% { border-color:rgba(233,201,138,.9); } }
 
 /* Compact windows show touch controls with a mouse too; give them the same layout. */
 @media(max-width:700px) {
   .touch-only:not(.stick-only), body.stick-controls .stick-only { display:flex!important; }
   p.touch-only { display:block!important; }
-  body.driving.stick-controls #stickZone { display:block; }
-  body.stick-controls #mapPanel { bottom:175px; }
+  body.driving.stick-controls .stick-zone { display:block; }
+  body.stick-controls #mapPanel, body.stick-controls #dashboard { bottom:calc(190px + env(safe-area-inset-bottom)); }
   body.driving.coaching #coach { display:block; }
-  body.stick-controls.coaching #mapPanel { opacity:0; }
 }
 @media(max-height:600px) {
   #touchGuide { display:none!important; }
   #settingsRow { margin-top:10px; }
+  /* Landscape phones: the readout sits in the top right, clear of the sticks. */
+  body.touch.stick-controls #dashboard { top:76px; bottom:auto; }
+  /* Keep the car clear: Jump and Drift move beside the steering stick. */
+  body.stick-controls #touch { justify-content:flex-end; padding-right:calc(160px + env(safe-area-inset-right)); }
+  body.stick-controls #touch .touch-center { flex-direction:row; }
+  body.stick-controls #coach { bottom:calc(178px + env(safe-area-inset-bottom)); }
 }

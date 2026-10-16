@@ -1,21 +1,21 @@
-import { createTerrain } from './terrain.mjs?v=controls-1';
+import { createTerrain } from './terrain.mjs?v=sticks-1';
 import { createWater } from './water.mjs?v=timing-1';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, farIndices, farCoverage } from './streaming-layout.mjs?v=controls-1';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, farIndices, farCoverage } from './streaming-layout.mjs?v=sticks-1';
 import { loadVehicleModel } from './vehicle-model.mjs?v=amphibious-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=controls-1';
+import { createDebris } from './debris.mjs?v=sticks-1';
 import { createVehiclePresentation } from './vehicle-presentation.mjs?v=alignment-1';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
 import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=grass-1';
 import { installSunShadowFade } from './shadow-fade.mjs?v=grass-1';
-import { createGrass } from './grass.mjs?v=controls-1';
-import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=controls-1';
-import { controlAxis, stickAxes } from './controls.mjs?v=controls-1';
+import { createGrass } from './grass.mjs?v=sticks-1';
+import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=sticks-1';
+import { controlAxis, speedAxis, steerAxis } from './controls.mjs?v=sticks-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=controls-1';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=controls-1';
+import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=sticks-1';
+import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=sticks-1';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -59,13 +59,13 @@ if (!testMode) try { muted = localStorage.getItem('endless-drive-muted') !== '0'
 const input = {}, keyStates = new Set(), touchStates = new Map();
 // Graphics and touch preferences. Tests use fixed, device-appropriate settings
 // unless ?quality= is given, so slow software rendering never changes a level.
-const settings = { quality: 'auto', steering: 'joystick', sensitivity: 1, autoLevel: null, coached: false };
+const settings = { quality: 'auto', steering: 'sticks', sensitivity: 1, autoLevel: null, coached: false };
 if (!testMode) try { Object.assign(settings, JSON.parse(localStorage.getItem('endless-drive-settings') || '{}')); } catch {}
 const qualityParam = new URLSearchParams(location.search).get('quality');
 if (QUALITY_PRESETS.includes(qualityParam)) settings.quality = qualityParam;
 else if (testMode) settings.quality = coarse ? 'medium' : 'high';
 if (!QUALITY_PRESETS.includes(settings.quality)) settings.quality = 'auto';
-if (!['joystick', 'buttons'].includes(settings.steering)) settings.steering = 'joystick';
+if (!['sticks', 'buttons'].includes(settings.steering)) settings.steering = 'sticks';
 settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
 const saveSettings = () => { if (!testMode) try { localStorage.setItem('endless-drive-settings', JSON.stringify(settings)); } catch {} };
 const levels = qualityLevels(coarse);
@@ -407,7 +407,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of farTiles.values()) { scene.remove(tile); tile.geometry.dispose(); } farTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear();
-  worker = new Worker(new URL('./world-worker.mjs?v=controls-1', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=sticks-1', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -475,12 +475,12 @@ $('soundBtn').onclick = toggleSound;
 function saveRecord() { bestDistance = Math.max(bestDistance, vehicle.distance); if (!testMode) try { localStorage.setItem('endless-drive-records', JSON.stringify({ distance: bestDistance })); } catch {} }
 let toastTimer;
 function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600); }
-function clearInput() { releaseStick(false); keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
+function clearInput() { for (const stick of sticks) releaseStick(stick, false); keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
 function syncInput() {
   for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k);
   // Analog axes add to the digital keys; physics clamps the combined value.
-  const axes = stick.pointer === null ? null : stickAxes(stick.x, stick.y, settings.sensitivity);
-  input.steer = axes?.steer; input.throttle = axes?.throttle;
+  input.throttle = speedStick.pointer === null ? undefined : speedAxis(speedStick.value);
+  input.steer = steerStick.pointer === null ? undefined : steerAxis(steerStick.value, settings.sensitivity);
 }
 const throttleInput = () => controlAxis(input.throttle, input.up, input.down);
 function resume() {
@@ -596,12 +596,12 @@ const qualityNames = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High' 
 function syncSettings() {
   const level = levels[qualityLevel].name;
   $('qualityBtn').textContent = `Graphics: ${qualityNames[settings.quality]}${auto ? ` · ${level === 'medium+' ? 'Medium+' : qualityNames[level]}` : ''}`;
-  $('steeringBtn').textContent = `Steering: ${settings.steering === 'joystick' ? 'Joystick' : 'Buttons'}`;
+  $('steeringBtn').textContent = `Steering: ${settings.steering === 'sticks' ? 'Sticks' : 'Buttons'}`;
   $('sensitivity').value = Math.round(settings.sensitivity * 100);
   $('sensitivityValue').textContent = `${Math.round(settings.sensitivity * 100)}%`;
-  document.body.classList.toggle('stick-controls', settings.steering === 'joystick');
-  $('touchGuide').textContent = settings.steering === 'joystick' ? 'Left thumb: drag to steer, push up to go, pull back to brake. Right thumb: jump and drift.' : 'Arrows steer, accelerate and brake. Jump and drift sit in the middle.';
-  $('coachText').innerHTML = settings.steering === 'joystick' ? 'Drag anywhere here<br><b>← →</b> steer · <b>↑</b> go · <b>↓</b> brake' : '<b>← →</b> steer · <b>↑</b> go · <b>↓</b> brake';
+  document.body.classList.toggle('stick-controls', settings.steering === 'sticks');
+  $('touchGuide').textContent = settings.steering === 'sticks' ? 'Left stick: push up to go, pull down to brake or reverse. Right stick: slide to steer. Jump and drift sit between them.' : 'Arrows steer, accelerate and brake. Jump and drift sit in the middle.';
+  $('coachText').innerHTML = settings.steering === 'sticks' ? '<span><b>↑</b> go · <b>↓</b> brake</span><span><b>← →</b> steer</span>' : '<b>← →</b> steer · <b>↑</b> go · <b>↓</b> brake';
 }
 $('qualityBtn').onclick = () => {
   settings.quality = QUALITY_PRESETS[(QUALITY_PRESETS.indexOf(settings.quality) + 1) % QUALITY_PRESETS.length];
@@ -609,14 +609,19 @@ $('qualityBtn').onclick = () => {
   toast(settings.quality === 'auto' ? 'Auto graphics adjust to your device' : `${qualityNames[settings.quality]} graphics`);
 };
 $('steeringBtn').onclick = () => {
-  settings.steering = settings.steering === 'joystick' ? 'buttons' : 'joystick';
-  saveSettings(); syncSettings(); toast(settings.steering === 'joystick' ? 'Joystick steering' : 'Button steering');
+  settings.steering = settings.steering === 'sticks' ? 'buttons' : 'sticks';
+  saveSettings(); syncSettings(); toast(settings.steering === 'sticks' ? 'Stick controls' : 'Button controls');
 };
 $('sensitivity').oninput = e => { settings.sensitivity = clamp(Number(e.target.value) / 100, .5, 1.5); saveSettings(); syncSettings(); };
 
-// Floating joystick: it appears under the left thumb wherever it lands, and
-// follows a drag past its rim so reversing direction responds immediately.
-const STICK_RADIUS = 56, stick = { pointer: null, ox: 0, oy: 0, x: 0, y: 0 };
+// Two fixed sticks, one per screen half: speed on the left (vertical only) and
+// steering on the right (horizontal only). Each stays where it is drawn; a
+// touch anywhere in its half reads relative to that fixed center, and the
+// knob stops at the rim however far the finger travels.
+const STICK_TRAVEL = 42;
+const speedStick = { zone: 'speedZone', axis: 'y', pointer: null, value: 0 };
+const steerStick = { zone: 'steerZone', axis: 'x', pointer: null, value: 0 };
+const sticks = [speedStick, steerStick];
 let coachTimer;
 function dismissCoach() {
   clearTimeout(coachTimer);
@@ -624,33 +629,31 @@ function dismissCoach() {
   document.body.classList.remove('coaching');
   if (!settings.coached) { settings.coached = true; saveSettings(); }
 }
-function drawStick() {
-  const base = $('stick');
-  base.style.left = `${stick.ox}px`; base.style.top = `${stick.oy}px`;
-  base.firstElementChild.style.transform = `translate(${stick.x * STICK_RADIUS}px, ${-stick.y * STICK_RADIUS}px)`;
-}
-function releaseStick(sync = true) {
+function knob(stick) { return $(stick.zone).querySelector('.stick i'); }
+function releaseStick(stick, sync = true) {
   if (stick.pointer === null) return;
-  stick.pointer = null; stick.x = stick.y = 0;
-  const base = $('stick'); base.classList.remove('active'); base.style.left = base.style.top = ''; base.firstElementChild.style.transform = '';
+  stick.pointer = null; stick.value = 0;
+  $(stick.zone).querySelector('.stick').classList.remove('active'); knob(stick).style.transform = '';
   if (sync) syncInput();
 }
-function moveStick(e) {
-  let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
-  const d = Math.hypot(dx, dy);
-  if (d > STICK_RADIUS) { stick.ox += dx * (1 - STICK_RADIUS / d); stick.oy += dy * (1 - STICK_RADIUS / d); dx *= STICK_RADIUS / d; dy *= STICK_RADIUS / d; }
-  stick.x = dx / STICK_RADIUS; stick.y = -dy / STICK_RADIUS;
-  drawStick(); syncInput();
+function moveStick(stick, e) {
+  const track = $(stick.zone).querySelector('.stick').getBoundingClientRect();
+  const offset = stick.axis === 'x' ? e.clientX - (track.left + track.width / 2) : (track.top + track.height / 2) - e.clientY;
+  stick.value = clamp(offset / STICK_TRAVEL, -1, 1);
+  knob(stick).style.transform = stick.axis === 'x' ? `translateX(${stick.value * STICK_TRAVEL}px)` : `translateY(${-stick.value * STICK_TRAVEL}px)`;
+  syncInput();
 }
-$('stickZone').addEventListener('pointerdown', e => {
-  e.preventDefault();
-  if (!running || stick.pointer !== null) return;
-  $('stickZone').setPointerCapture(e.pointerId);
-  stick.pointer = e.pointerId; stick.ox = e.clientX; stick.oy = e.clientY; stick.x = stick.y = 0;
-  $('stick').classList.add('active'); drawStick(); syncInput(); dismissCoach();
-});
-$('stickZone').addEventListener('pointermove', e => { if (e.pointerId === stick.pointer) moveStick(e); });
-for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) $('stickZone').addEventListener(type, e => { if (e.pointerId === stick.pointer) releaseStick(); });
+for (const stick of sticks) {
+  const zone = $(stick.zone);
+  zone.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (!running || stick.pointer !== null) return;
+    zone.setPointerCapture(e.pointerId); stick.pointer = e.pointerId;
+    zone.querySelector('.stick').classList.add('active'); moveStick(stick, e); dismissCoach();
+  });
+  zone.addEventListener('pointermove', e => { if (e.pointerId === stick.pointer) moveStick(stick, e); });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) zone.addEventListener(type, e => { if (e.pointerId === stick.pointer) releaseStick(stick); });
+}
 
 const mapContext = $('minimap').getContext('2d');
 function drawMap() {

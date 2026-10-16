@@ -1,6 +1,6 @@
-import { createWorld, CHUNK, GRID, ROAD_SPACING } from './world.mjs?v=controls-1';
-import { createTerrain } from './terrain.mjs?v=controls-1';
-import { buildGrass } from './grass-data.mjs?v=controls-1';
+import { createWorld, CHUNK, GRID, ROAD_SPACING } from './world.mjs?v=sticks-1';
+import { createTerrain } from './terrain.mjs?v=sticks-1';
+import { buildGrass } from './grass-data.mjs?v=sticks-1';
 import { buildWaterData } from './water-data.mjs?v=timing-1';
 let world, terrain;
 self.onmessage = ({ data: job }) => {

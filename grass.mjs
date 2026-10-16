@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK } from './world.mjs?v=controls-1';
+import { CHUNK } from './world.mjs?v=sticks-1';
 
 // Quality presets change density, fade and range live: the worker always
 // supplies the full shuffled set, and lower densities draw a prefix of it.

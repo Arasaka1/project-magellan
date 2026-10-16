@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from '../quality.mjs';
-import { controlAxis, stickAxes } from '../controls.mjs';
+import { controlAxis, speedAxis, steerAxis } from '../controls.mjs';
 import { createWorld, createVehicle, stepVehicle } from '../world.mjs';
 
 // Feed a constant frame interval for a duration; return every level change.
@@ -65,17 +65,20 @@ test('auto quality settles at the lowest level on a device locked at 30 fps', ()
   assert.equal(auto.level, 0);
 });
 
-test('joystick axes: dead zone, full lock at the rim, sensitivity curve and shallow throttle', () => {
-  assert.deepEqual(stickAxes(0, 0), { steer: 0, throttle: 0 });
-  assert.equal(stickAxes(.05, 0).steer, 0);
-  assert.equal(stickAxes(1, 0).steer, -1); assert.equal(stickAxes(-1, 0).steer, 1);
-  for (const s of [.5, 1, 1.5]) assert.equal(stickAxes(-1, 0, s).steer, 1);
-  const soft = stickAxes(-.4, 0, .5).steer, normal = stickAxes(-.4, 0, 1).steer, sharp = stickAxes(-.4, 0, 1.5).steer;
+test('speed stick: dead zone, proportional throttle and full power just before the rim', () => {
+  assert.equal(speedAxis(0), 0); assert.equal(speedAxis(.1), 0); assert.equal(speedAxis(-.1), 0);
+  assert.equal(speedAxis(.85), 1); assert.equal(speedAxis(1), 1); assert.equal(speedAxis(-1), -1);
+  const half = speedAxis(.485);
+  assert.ok(half > .45 && half < .55);
+  assert.ok(speedAxis(.3) < speedAxis(.6));
+});
+
+test('steering stick: dead zone, full lock at the rim, sensitivity curve', () => {
+  assert.equal(steerAxis(0), 0); assert.equal(steerAxis(.05), 0);
+  assert.equal(steerAxis(1), -1); assert.equal(steerAxis(-1), 1);
+  for (const s of [.5, 1, 1.5]) assert.equal(steerAxis(-1, s), 1);
+  const soft = steerAxis(-.4, .5), normal = steerAxis(-.4, 1), sharp = steerAxis(-.4, 1.5);
   assert.ok(soft < normal && normal < sharp);
-  assert.equal(stickAxes(0, .5).throttle, 1);
-  assert.ok(stickAxes(-.94, .34).throttle > .5); // a hard turn keeps most of its power
-  assert.equal(stickAxes(0, -.2).throttle, 0);
-  assert.equal(stickAxes(0, -1).throttle, -1);
 });
 
 test('analog input combines with digital keys and scales car acceleration', () => {
