@@ -36,3 +36,27 @@ test('the original body and wheels move continuously and return exactly, with no
   assert.equal(fold.name, 'WheelFold_FL');
   assert.ok(fold.position.distanceTo(new Vector3(-1.04, .57, 1.37)) < 1e-5);
 });
+
+test('wheel rigs retain simulation origins and turn independently of the suspended body', () => {
+  rig.update(0);
+  scene.updateMatrixWorld(true);
+  const body = scene.getObjectByName('Body'), before = new Box3().setFromObject(body);
+  for (const [name, x, z] of [['FL', -1.04, 1.37], ['RL', -1.04, -1.37], ['FR', 1.04, 1.37], ['RR', 1.04, -1.37]]) {
+    const pivot = scene.getObjectByName(`Wheel_${name}`), spinner = scene.getObjectByName(`Spinner_${name}`);
+    assert.equal(spinner.parent, pivot);
+    assert.ok(pivot.getWorldPosition(new Vector3()).distanceTo(new Vector3(x, .57, z)) < 1e-5, `wheel ${name} axle`);
+    const bounds = new Box3().setFromObject(spinner), center = bounds.getCenter(new Vector3());
+    assert.ok(Math.abs(bounds.min.y) < .025, `wheel ${name} meets ground: ${bounds.min.y}`);
+    assert.ok(Math.abs(center.y - .57) < .015); assert.ok(Math.abs(center.z - z) < .015);
+    spinner.rotation.x = .73; pivot.rotation.y = z > 0 ? .2 : 0;
+  }
+  scene.updateMatrixWorld(true);
+  const after = new Box3().setFromObject(body);
+  assert.ok(before.min.distanceTo(after.min) < 1e-9 && before.max.distanceTo(after.max) < 1e-9);
+  const materials = new Map();
+  scene.traverse(o => { if (o.isMesh) for (const m of [o.material].flat()) materials.set(m.name, m); });
+  assert.ok(materials.get('Headlamp').emissive.getHex() > 0);
+  assert.ok(materials.get('Brake_Lamp').emissive.getHex() > 0);
+  assert.notEqual(materials.get('Headlamp'), materials.get('Brake_Lamp'));
+  for (const name of ['FL', 'RL', 'FR', 'RR']) { scene.getObjectByName(`Spinner_${name}`).rotation.x = 0; scene.getObjectByName(`Wheel_${name}`).rotation.y = 0; }
+});

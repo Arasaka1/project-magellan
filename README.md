@@ -63,7 +63,6 @@ Touch devices and compact windows default to two fixed **sticks**, one in each h
 - `nature-models.mjs` / `assets/nature/`: bundled Blender scenery, variant selection and matching tree fragments.
 - `scripts/build-nature.py` / `scripts/export_nature.py`: build the editable nature library or export manually edited models.
 - `terrain.mjs` / `world-worker.mjs` / `streaming-layout.mjs`: reusable terrain data, background generation and seam-free near/far coverage.
-- `batching.mjs`: static mesh batching utility; the Blender car is already batched during export.
 - `vehicle-presentation.mjs`: interpolates fixed-step poses for smooth car, wheel, camera and shadow motion across display refresh rates.
 - `grass-data.mjs` / `grass.mjs`: background placement and batched near-field plains grass, with density and range set live by the graphics level.
 - `quality.mjs`: Low/Medium/High levels and the Auto frame-time controller.
@@ -85,7 +84,7 @@ npx playwright install chromium
 npm test
 ```
 
-On macOS, browser tests render with the GPU through ANGLE Metal: about 1.5 minutes for the suite on an Apple M2. CI and other platforms use SwiftShader software rendering, which runs the game at about 4 fps and the suite in about 6 minutes. `PW_RENDERER=swiftshader npm run test:browser` reproduces CI locally; `PW_RENDERER=metal` forces the GPU.
+On macOS, browser tests render with the GPU through ANGLE Metal: about 1.2 minutes for the suite on an Apple M2. CI and other platforms use SwiftShader software rendering, which runs the game at about 4 fps. Test mode lets the simulation catch up by up to 0.5 s per frame (normally 0.1 s), so driving still runs in real time at that frame rate, in the same fixed 1/120 s physics steps. The SwiftShader suite takes about 4 minutes locally. `PW_RENDERER=swiftshader npm run test:browser` reproduces CI locally; `PW_RENDERER=metal` forces the GPU.
 
 The tests cover terrain continuity, seeded regeneration, scenery clearances, challenging slopes, jump buffering and landing, 300 km/h highway top speed, automatic ramp launches across three seeds, landmark regeneration, acceleration/reverse, drift, collision escape, recovery, frame-rate independence and 24 simulated one-minute drives across eight directions and three seeds.
 
@@ -109,7 +108,7 @@ To rebuild the source, preview and game asset with Blender installed:
 /Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python scripts/build-car.py
 ```
 
-On another platform, substitute the path to your Blender executable. The build was verified with Blender 5.2. The playable export uses approximately 50,000 triangles in 26 material batches and is about 1.5 MB. The export reduces small bevels and redundant surface detail while the `.blend` retains the editable geometry. Exact counts are recorded in `assets/vehicles/atlas-expedition.json`.
+On another platform, substitute the path to your Blender executable. The build was verified with Blender 5.2. The playable export uses approximately 50,000 triangles in 26 material batches and is about 1.5 MB. The export reduces small bevels and redundant surface detail while the `.blend` retains the editable geometry. The build and the export below also write this base car's standalone `atlas-expedition.glb` and `.json`. The game loads only the amphibious export, so those two outputs are not kept in the repository.
 
 After manually editing the source in Blender, export your changes without rebuilding the car:
 
@@ -161,7 +160,7 @@ The rendered car interpolates the two latest physics poses (at most one 120 Hz t
 
 When both physics poses are grounded and the car is fully in driving form, presentation samples terrain support at the interpolated position and preserves clearance above it. This removes the small height error from drawing a straight line between ticks across terrain creases. Launch, landing, airborne and transformation intervals keep their existing interpolation; simulation and collision state remain independent of display refresh rate.
 
-Ramp backs and sides obey normal ballistic separation, so oblique and reverse approaches carry upward momentum into the air instead of sticking to the deck. Tests compare five rear/side directions against identical unmarked terrain, check oblique front approaches and slow traversal, and drive a rear-diagonal approach in Chromium (`?seed=1&test=ramp-side`).
+Ramp backs and sides obey normal ballistic separation, so oblique and reverse approaches carry upward momentum into the air instead of sticking to the deck. Tests compare five rear/side directions against identical unmarked terrain, check oblique front approaches and slow traversal.
 
 Breaking sounds share the engine’s sound toggle (M or the speaker button); muting silences all game audio. Highway power rises smoothly near the road, with level-road cruising around 301 km/h, off-road cruising around 236 km/h, and a downhill cap of 331 km/h. Preview tree impacts with `?seed=77&test=tree-smash`.
 

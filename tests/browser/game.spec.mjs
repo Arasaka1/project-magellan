@@ -40,8 +40,8 @@ test('deep water transforms the Blender car, floats with a wake, and reverses on
   expect(errors).toEqual([]);
 });
 
-test('Blender trees, cacti and rocks render as seeded instances in forest and desert worlds', async ({ page }, testInfo) => {
-  for (const [seed, kind] of [[3, 'tree'], [100003, 'cactus']]) {
+test('Blender cacti and rocks render as seeded instances in a desert world', async ({ page }, testInfo) => {
+  for (const [seed, kind] of [[100003, 'cactus']]) {
     const errors = await openGame(page, seed);
     const state = await snapshot(page);
     expect(state.natureAsset.ready).toBe(true); expect(state.natureAsset.error).toBeNull();
@@ -96,6 +96,9 @@ test('worker loading, actual WebGL rendering, and stationary scenery stay stable
   expect(state.grass.tufts).toBeGreaterThan(0); expect(state.grass.meshes).toBeLessThanOrEqual(9);
   expect(state.grass.tufts * 3).toBeLessThanOrEqual(43200);
   expect(state.loading).toBe(false); expect(state.carMeshes).toBeLessThan(80); expect(state.farTiles).toBe(81);
+  expect(state.natureAsset.ready).toBe(true); expect(state.natureAsset.error).toBeNull();
+  expect(state.natureAsset.assets).toHaveLength(8);
+  expect(state.natureAsset.instances.tree).toBeGreaterThan(10); expect(state.natureAsset.instances.rock).toBeGreaterThan(0);
   expect(state.metrics.workerBuild.count).toBeGreaterThanOrEqual(162);
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
   // The menu camera is already settled. Wait for gameplay to render before
@@ -122,21 +125,7 @@ test('worker loading, actual WebGL rendering, and stationary scenery stay stable
   expect(errors).toEqual([]);
 });
 
-test('high-speed scenery impact hides every instance and releases bounded debris', async ({ page }, testInfo) => {
-  const errors = await openGame(page, 1, 'smash');
-  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
-  await page.keyboard.down('KeyW');
-  await expect.poll(async () => (await snapshot(page)).vehicle.smashed, { timeout: 30000, intervals: [100] }).toBeGreaterThan(0);
-  await page.keyboard.up('KeyW');
-  const hit = await snapshot(page);
-  expect(hit.brokenProps).toBeGreaterThan(0); expect(hit.hiddenProps).toBeGreaterThan(0);
-  expect(hit.debris).toBeGreaterThan(0); expect(hit.debris).toBeLessThanOrEqual(192);
-  await testInfo.attach('impact', { body: await page.screenshot(), contentType: 'image/png' });
-  await expect.poll(async () => (await snapshot(page)).debris, { timeout: 30000 }).toBe(0);
-  expect(errors).toEqual([]);
-});
-
-test('trees fracture into visible sections and breaking audio respects mute', async ({ page }, testInfo) => {
+test('trees fracture into visible sections, release bounded debris, and breaking audio respects mute', async ({ page }, testInfo) => {
   const errors = await openGame(page, 77, 'tree-smash');
   await page.getByRole('button', { name: 'Unmute sound', exact: true }).click();
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
@@ -145,6 +134,8 @@ test('trees fracture into visible sections and breaking audio respects mute', as
   await page.keyboard.up('KeyW');
   const impact = await snapshot(page);
   expect(impact.fallingTrees).toBeLessThanOrEqual(8); expect(impact.hiddenProps).toBeGreaterThan(0);
+  expect(impact.brokenProps).toBeGreaterThan(0);
+  expect(impact.debris).toBeGreaterThan(0); expect(impact.debris).toBeLessThanOrEqual(192);
   expect(impact.sound.played).toBeGreaterThan(0); expect(impact.sound.masterGain).toBe(1);
   await testInfo.attach('fractured-tree', { body: await page.screenshot(), contentType: 'image/png' });
   await page.waitForTimeout(600);
@@ -153,6 +144,7 @@ test('trees fracture into visible sections and breaking audio respects mute', as
   // AudioParam.value updates on the next audio render quantum, not at once.
   await expect.poll(async () => (await snapshot(page)).sound.masterGain, { timeout: 2000 }).toBe(0);
   await expect.poll(async () => (await snapshot(page)).fallingTrees, { timeout: 30000 }).toBe(0);
+  await expect.poll(async () => (await snapshot(page)).debris, { timeout: 30000 }).toBe(0);
   await expect.poll(async () => (await snapshot(page)).sound.active, { timeout: 5000 }).toBe(0);
   expect(errors).toEqual([]);
 });
@@ -194,18 +186,6 @@ test('a purple ramp launches the car into a barrel roll and lands driveable', as
   expect(errors).toEqual([]);
 });
 
-test('an approach from behind at an angle launches and lands without pressing Jump', async ({ page }) => {
-  const errors = await openGame(page, 1, 'ramp-side');
-  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
-  await page.keyboard.down('KeyW');
-  await expect.poll(async () => {
-    const { vehicle } = await snapshot(page); return vehicle.y - vehicle.groundY;
-  }, { timeout: 20000, intervals: [100] }).toBeGreaterThan(2);
-  await expect.poll(async () => (await snapshot(page)).vehicle.bestJump, { timeout: 30000 }).toBeGreaterThan(10);
-  await page.keyboard.up('KeyW');
-  expect((await snapshot(page)).vehicle.jumps).toBe(0);
-  expect(errors).toEqual([]);
-});
 test('keyboard jump, driving across chunks, recovery, and new-world reset', async ({ page }) => {
   const errors = await openGame(page, 3);
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
@@ -234,21 +214,16 @@ test('keyboard jump, driving across chunks, recovery, and new-world reset', asyn
 
 test.describe('mobile Chrome controls', () => {
   test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 390, height: 844 } });
-test('mobile plains render grass within their smaller density and draw budget', async ({ page }, testInfo) => {
-  const errors = await openGame(page, 3);
-  await page.getByRole('button', { name: 'Start exploring', exact: true }).tap();
-  const state = await snapshot(page);
-  expect(state.grass.range).toBe(48); expect(state.grass.meshes).toBeGreaterThan(0);
-  expect(state.grass.meshes).toBeLessThanOrEqual(4); expect(state.grass.tufts).toBeGreaterThan(0);
-  expect(state.grass.tufts * 3).toBeLessThanOrEqual(9600);
-  await testInfo.attach('mobile-grass', { body: await page.screenshot(), contentType: 'image/png' });
-  expect(errors).toEqual([]);
-});
-test('graphics presets cycle, and twin fixed sticks drive and steer independently', async ({ page }) => {
+test('graphics presets cycle, and twin fixed sticks drive and steer independently', async ({ page }, testInfo) => {
   const errors = await openGame(page, 3);
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Medium');
   let state = await snapshot(page);
   expect(state.quality).toMatchObject({ preset: 'medium', pixelRatio: 1.35, shadow: 1024, grassDensity: .5 });
+  // Medium plains grass stays within its smaller range and draw budget.
+  expect(state.grass.range).toBe(48); expect(state.grass.meshes).toBeGreaterThan(0);
+  expect(state.grass.meshes).toBeLessThanOrEqual(4); expect(state.grass.tufts).toBeGreaterThan(0);
+  expect(state.grass.tufts * 3).toBeLessThanOrEqual(9600);
+  await testInfo.attach('mobile-grass', { body: await page.screenshot(), contentType: 'image/png' });
   await page.locator('#qualityBtn').tap();
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: High');
   state = await snapshot(page);
