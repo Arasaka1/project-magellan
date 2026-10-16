@@ -1,5 +1,5 @@
 import { waterWave } from './lakes.mjs?v=amphibious-1';
-import { controlAxis } from './controls.mjs?v=sticks-1';
+import { controlAxis } from './controls.mjs?v=slider-1';
 export const TRANSFORM_SECONDS = 2.4;
 export const BOAT_ENTER_DEPTH = .9;
 export const BOAT_EXIT_DEPTH = .4;

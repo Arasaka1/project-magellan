@@ -214,7 +214,7 @@ test('keyboard jump, driving across chunks, recovery, and new-world reset', asyn
 
 test.describe('mobile Chrome controls', () => {
   test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 390, height: 844 } });
-test('graphics presets cycle, and twin fixed sticks drive and steer independently', async ({ page }, testInfo) => {
+test('graphics presets cycle, and the steering slider replaces the arrow buttons', async ({ page }, testInfo) => {
   const errors = await openGame(page, 3);
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Medium');
   let state = await snapshot(page);
@@ -231,34 +231,36 @@ test('graphics presets cycle, and twin fixed sticks drive and steer independentl
   expect(state.grass.range).toBe(78);
   await page.locator('#qualityBtn').tap();
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Auto · Medium');
-  await expect(page.locator('#steeringBtn')).toHaveText('Steering: Sticks');
   await page.getByRole('button', { name: 'Start exploring', exact: true }).tap();
-  await expect(page.locator('#coach')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Steer left' })).toBeHidden();
-  // Two real touch points: left thumb on the speed stick, right on steering.
-  const centerOf = async selector => { const box = await page.locator(selector).boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
-  const speed = await centerOf('#speedZone .stick'), steer = await centerOf('#steerZone .stick');
+  // The original layout: speed arrows on the right, Jump and Drift in the
+  // middle, and the steering slider where the ← → buttons were.
+  for (const name of ['Accelerate', 'Brake or reverse', 'Jump', 'Drift']) await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Steer left' })).toHaveCount(0);
+  const slider = page.getByRole('slider', { name: 'Steering: slide left or right' });
+  await expect(slider).toBeVisible();
+  const track = await slider.boundingBox(), pedal = await page.getByRole('button', { name: 'Accelerate', exact: true }).boundingBox();
+  expect(track.x).toBeLessThan(40); expect(track.y + track.height).toBeGreaterThan(780);
+  const steer = { x: track.x + track.width / 2, y: track.y + track.height / 2 }, gas = { x: pedal.x + pedal.width / 2, y: pedal.y + pedal.height / 2 };
+  // Two real touch points: one thumb holds Accelerate, the other slides.
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
-  await touch('touchStart', [[speed.x, speed.y], [steer.x, steer.y]]);
-  await touch('touchMove', [[speed.x, speed.y - 60], [steer.x - 30, steer.y]]);
+  await touch('touchStart', [[steer.x, steer.y], [gas.x, gas.y]]);
+  await touch('touchMove', [[steer.x - 20, steer.y], [gas.x, gas.y]]);
   await expect.poll(async () => (await snapshot(page)).controls.throttle).toBe(1);
   state = await snapshot(page);
   const partial = state.controls.steer;
-  expect(partial).toBeGreaterThan(.5); expect(partial).toBeLessThan(.8);
-  await expect(page.locator('#coach')).toBeHidden();
-  // Dragging far past the rim gives full lock; returning gives the same
-  // partial lock again, because the stick never moves with the finger.
-  await touch('touchMove', [[speed.x + 80, speed.y - 60], [steer.x - 260, steer.y - 120]]);
+  expect(partial).toBeGreaterThan(.4); expect(partial).toBeLessThan(.8);
+  // Dragging far past the end gives full lock; returning gives the same
+  // partial lock again, because the track never moves with the finger.
+  await touch('touchMove', [[steer.x - 260, steer.y - 120], [gas.x, gas.y]]);
   await expect.poll(async () => (await snapshot(page)).controls.steer).toBe(1);
-  expect((await snapshot(page)).controls.throttle).toBe(1);
-  await touch('touchMove', [[speed.x, speed.y - 60], [steer.x - 30, steer.y]]);
+  await touch('touchMove', [[steer.x - 20, steer.y], [gas.x, gas.y]]);
   await expect.poll(async () => (await snapshot(page)).controls.steer).toBeCloseTo(partial, 5);
   await expect.poll(async () => (await snapshot(page)).vehicle.speed, { timeout: 30000 }).toBeGreaterThan(4);
   await expect.poll(async () => (await snapshot(page)).vehicle.heading, { timeout: 30000 }).toBeGreaterThan(.05);
   await touch('touchEnd', []);
-  await expect.poll(async () => (await snapshot(page)).controls.throttle).toBe(null);
-  expect((await snapshot(page)).controls.steer).toBe(null);
+  await expect.poll(async () => (await snapshot(page)).controls.steer).toBe(null);
+  expect((await snapshot(page)).controls.throttle).toBe(0);
   expect(errors).toEqual([]);
 });
 test('a second world request cancels old work and touch controls still jump', async ({ page }) => {

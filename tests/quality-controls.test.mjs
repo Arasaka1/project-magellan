@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from '../quality.mjs';
-import { controlAxis, speedAxis, steerAxis } from '../controls.mjs';
+import { controlAxis, steerAxis } from '../controls.mjs';
 import { createWorld, createVehicle, stepVehicle } from '../world.mjs';
 
 // Feed a constant frame interval for a duration; return every level change.
@@ -65,15 +65,7 @@ test('auto quality settles at the lowest level on a device locked at 30 fps', ()
   assert.equal(auto.level, 0);
 });
 
-test('speed stick: dead zone, proportional throttle and full power just before the rim', () => {
-  assert.equal(speedAxis(0), 0); assert.equal(speedAxis(.1), 0); assert.equal(speedAxis(-.1), 0);
-  assert.equal(speedAxis(.85), 1); assert.equal(speedAxis(1), 1); assert.equal(speedAxis(-1), -1);
-  const half = speedAxis(.485);
-  assert.ok(half > .45 && half < .55);
-  assert.ok(speedAxis(.3) < speedAxis(.6));
-});
-
-test('steering stick: dead zone, full lock at the rim, sensitivity curve', () => {
+test('steering slider: dead zone, full lock at the rim, sensitivity curve', () => {
   assert.equal(steerAxis(0), 0); assert.equal(steerAxis(.05), 0);
   assert.equal(steerAxis(1), -1); assert.equal(steerAxis(-1), 1);
   for (const s of [.5, 1, 1.5]) assert.equal(steerAxis(-1, s), 1);

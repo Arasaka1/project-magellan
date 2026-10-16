@@ -1,7 +1,7 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
 import { createLakes } from './lakes.mjs?v=amphibious-1';
-import { stepAmphibious } from './amphibious-motion.mjs?v=sticks-1';
-import { controlAxis } from './controls.mjs?v=sticks-1';
+import { stepAmphibious } from './amphibious-motion.mjs?v=slider-1';
+import { controlAxis } from './controls.mjs?v=slider-1';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;
