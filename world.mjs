@@ -1,6 +1,7 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
 import { createLakes } from './lakes.mjs?v=amphibious-1';
-import { stepAmphibious } from './amphibious-motion.mjs?v=amphibious-1';
+import { stepAmphibious } from './amphibious-motion.mjs?v=controls-1';
+import { controlAxis } from './controls.mjs?v=controls-1';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;
@@ -252,7 +253,7 @@ function launchRoll(car, ramp, speed) {
 }
 export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   if (stepAmphibious(car, input, world, dt, groundAt)) { resolveObstacles(car, obstacles, world); return; }
-  const throttle = Number(!!input.up) - Number(!!input.down), brake = !!input.brake;
+  const throttle = controlAxis(input.throttle, input.up, input.down), brake = !!input.brake;
   const jumpPressed = !!input.jump && !car.jumpHeld;
   car.jumpHeld = !!input.jump;
   car.jumpBuffer = jumpPressed ? .16 : Math.max(0, car.jumpBuffer - dt);
@@ -271,10 +272,10 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   const highway = 1 - smoothstep(ROAD_HALF - 1, ROAD_HALF + 3, roadDistance);
   const authority = car.grounded ? 1 : .16;
   let acceleration = 0;
-  if (throttle > 0) acceleration = forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway), mix(72, 89.5, highway), forward));
-  if (throttle < 0) acceleration = forward > .5 ? -55 : -18 * (1 - smoothstep(10, 16, -forward));
+  if (throttle > 0) acceleration = throttle * (forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway), mix(72, 89.5, highway), forward)));
+  if (throttle < 0) acceleration = -throttle * (forward > .5 ? -55 : -18 * (1 - smoothstep(10, 16, -forward)));
   car.vx += fx * acceleration * authority * dt; car.vz += fz * acceleration * authority * dt;
-  const targetSteer = Number(!!input.left) - Number(!!input.right);
+  const targetSteer = controlAxis(input.steer, input.left, input.right);
   car.steer = mix(car.steer, targetSteer, 1 - Math.exp(-10 * dt));
   car.heading += car.steer * (brake ? 2.1 : 1.7) * Math.min(speed / 5, 1) / (1 + speed * .032) * Math.sign(forward || 1) * authority * dt;
   const nx = Math.sin(car.heading), nz = Math.cos(car.heading), along = car.vx * nx + car.vz * nz;

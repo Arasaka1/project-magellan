@@ -1,8 +1,16 @@
 import * as THREE from 'three';
-import { CHUNK } from './world.mjs?v=grass-1';
+import { CHUNK } from './world.mjs?v=controls-1';
 
-export function createGrass(coarse, center) {
-  const range = coarse ? 48 : 78, fadeStart = coarse ? 22 : 38;
+// Quality presets change density, fade and range live: the worker always
+// supplies the full shuffled set, and lower densities draw a prefix of it.
+export function createGrass(center, quality = { density: 1, range: 78, fade: 38 }) {
+  const fadeUniform = { value: 0 }, rangeUniform = { value: 0 };
+  let density = 1, range = 78;
+  function setQuality(next) {
+    density = next.density; range = next.range;
+    fadeUniform.value = next.fade; rangeUniform.value = next.range;
+  }
+  setQuality(quality);
   // Three tapered, bent blades per tuft. Opaque triangles avoid transparent
   // overdraw and sorting; grass never participates in shadow casting or physics.
   const positions = [];
@@ -14,9 +22,9 @@ export function createGrass(coarse, center) {
   base.setAttribute('normal', new THREE.Float32BufferAttribute(positions.map((_, i) => i % 3 === 1 ? 1 : 0), 3));
   const material = new THREE.MeshStandardMaterial({ color: '#7e9059', roughness: 1, side: THREE.DoubleSide });
   material.onBeforeCompile = shader => {
-    shader.uniforms.uGrassCenter = center;
+    Object.assign(shader.uniforms, { uGrassCenter: center, uGrassFade: fadeUniform, uGrassRange: rangeUniform });
     shader.vertexShader = `attribute vec3 grassRoot; attribute vec3 grassShape;
-      uniform vec2 uGrassCenter; varying float vGrassHeight; varying float vGrassTint;\n` + shader.vertexShader;
+      uniform vec2 uGrassCenter; uniform float uGrassFade; uniform float uGrassRange; varying float vGrassHeight; varying float vGrassTint;\n` + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>', `
       #include <beginnormal_vertex>
       float c = cos(grassShape.y), s = sin(grassShape.y);
@@ -24,7 +32,7 @@ export function createGrass(coarse, center) {
     `);
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
       vec2 rootXZ = (modelMatrix * vec4(grassRoot, 1.0)).xz;
-      float coverage = 1.0 - smoothstep(${fadeStart.toFixed(1)}, ${range.toFixed(1)}, distance(rootXZ, uGrassCenter));
+      float coverage = 1.0 - smoothstep(uGrassFade, uGrassRange, distance(rootXZ, uGrassCenter));
       vec3 transformed = position;
       transformed.xz = mat2(c, s, -s, c) * transformed.xz;
       transformed *= grassShape.x * coverage;
@@ -37,16 +45,17 @@ export function createGrass(coarse, center) {
     shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize(vNormal);');
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= mix(.68, 1.15, vGrassHeight) * vGrassTint;');
   };
-  material.customProgramCacheKey = () => `grass-v1-${coarse ? 'mobile' : 'desktop'}`;
+  material.customProgramCacheKey = () => 'grass-v2';
   function build(data) {
-    const count = Math.floor(data.roots.length / 3 * (coarse ? .5 : 1));
-    if (!count) return null;
+    const total = data.roots.length / 3;
+    if (!total) return null;
     const geometry = new THREE.InstancedBufferGeometry();
     // Attribute ownership prevents chunk disposal invalidating another mesh.
     geometry.setAttribute('position', base.getAttribute('position').clone()); geometry.setAttribute('normal', base.getAttribute('normal').clone());
-    geometry.setAttribute('grassRoot', new THREE.InstancedBufferAttribute(data.roots.subarray(0, count * 3), 3));
-    geometry.setAttribute('grassShape', new THREE.InstancedBufferAttribute(data.shapes.subarray(0, count * 3), 3));
-    geometry.instanceCount = count;
+    geometry.setAttribute('grassRoot', new THREE.InstancedBufferAttribute(data.roots, 3));
+    geometry.setAttribute('grassShape', new THREE.InstancedBufferAttribute(data.shapes, 3));
+    geometry.userData.total = total;
+    geometry.instanceCount = Math.floor(total * density);
     let low = Infinity, high = -Infinity;
     for (let i = 1; i < data.roots.length; i += 3) { low = Math.min(low, data.roots[i]); high = Math.max(high, data.roots[i]); }
     geometry.boundingBox = new THREE.Box3(new THREE.Vector3(0, low, 0), new THREE.Vector3(CHUNK, high + 1, CHUNK));
@@ -59,7 +68,8 @@ export function createGrass(coarse, center) {
     if (!mesh) return;
     const dx = Math.max(cx * CHUNK - x, 0, x - (cx + 1) * CHUNK);
     const dz = Math.max(cz * CHUNK - z, 0, z - (cz + 1) * CHUNK);
-    mesh.visible = dx * dx + dz * dz < range * range;
+    mesh.geometry.instanceCount = Math.floor(mesh.geometry.userData.total * density);
+    mesh.visible = mesh.geometry.instanceCount > 0 && dx * dx + dz * dz < range * range;
   }
-  return { build, update, range, fadeStart };
+  return { build, update, setQuality, get range() { return range; }, get fadeStart() { return fadeUniform.value; }, get density() { return density; } };
 }

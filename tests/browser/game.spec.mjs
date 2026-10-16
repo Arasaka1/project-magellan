@@ -240,6 +240,35 @@ test('mobile plains render grass within their smaller density and draw budget', 
   await testInfo.attach('mobile-grass', { body: await page.screenshot(), contentType: 'image/png' });
   expect(errors).toEqual([]);
 });
+test('graphics presets cycle, and the floating joystick steers and accelerates analogly', async ({ page }) => {
+  const errors = await openGame(page, 3);
+  await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Medium');
+  let state = await snapshot(page);
+  expect(state.quality).toMatchObject({ preset: 'medium', pixelRatio: 1.35, shadow: 1024, grassDensity: .5 });
+  await page.locator('#qualityBtn').tap();
+  await expect(page.locator('#qualityBtn')).toHaveText('Graphics: High');
+  state = await snapshot(page);
+  expect(state.quality).toMatchObject({ preset: 'high', pixelRatio: 2, shadow: 2048, grassDensity: 1 });
+  expect(state.grass.range).toBe(78);
+  await page.locator('#qualityBtn').tap();
+  await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Auto · Medium');
+  await expect(page.locator('#steeringBtn')).toHaveText('Steering: Joystick');
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).tap();
+  await expect(page.locator('#coach')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Steer left' })).toBeHidden();
+  // Thumb down in the lower left, then drag left and up: turn left under power.
+  await page.mouse.move(100, 650); await page.mouse.down();
+  await page.mouse.move(70, 610, { steps: 4 });
+  await expect.poll(async () => (await snapshot(page)).controls.throttle).toBe(1);
+  state = await snapshot(page);
+  expect(state.controls.steer).toBeGreaterThan(.3); expect(state.controls.steer).toBeLessThan(.8);
+  await expect(page.locator('#coach')).toBeHidden();
+  await expect.poll(async () => (await snapshot(page)).vehicle.speed, { timeout: 30000 }).toBeGreaterThan(4);
+  await expect.poll(async () => (await snapshot(page)).vehicle.heading, { timeout: 30000 }).toBeGreaterThan(.05);
+  await page.mouse.up();
+  await expect.poll(async () => (await snapshot(page)).controls.throttle).toBe(null);
+  expect(errors).toEqual([]);
+});
 test('a second world request cancels old work and touch controls still jump', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });

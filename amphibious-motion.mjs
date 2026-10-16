@@ -1,4 +1,5 @@
 import { waterWave } from './lakes.mjs?v=amphibious-1';
+import { controlAxis } from './controls.mjs?v=controls-1';
 export const TRANSFORM_SECONDS = 2.4;
 export const BOAT_ENTER_DEPTH = .9;
 export const BOAT_EXIT_DEPTH = .4;
@@ -22,11 +23,11 @@ export function stepAmphibious(car, input, world, dt, groundAt) {
   if (!wasFloating) car.vy = Math.max(-2, car.vy);
 
   const oldX = car.x, oldZ = car.z;
-  const throttle = Number(!!input.up) - Number(!!input.down);
+  const throttle = controlAxis(input.throttle, input.up, input.down);
   const forwardX = Math.sin(car.heading), forwardZ = Math.cos(car.heading);
   const forward = car.vx * forwardX + car.vz * forwardZ;
-  car.steer += (Number(!!input.left) - Number(!!input.right) - car.steer) * (1 - Math.exp(-6 * dt));
-  const thrust = throttle > 0 ? (forward < -.4 ? 14 : 10) : throttle < 0 ? (forward > .4 ? -17 : -5) : 0;
+  car.steer += (controlAxis(input.steer, input.left, input.right) - car.steer) * (1 - Math.exp(-6 * dt));
+  const thrust = Math.abs(throttle) * (throttle > 0 ? (forward < -.4 ? 14 : 10) : throttle < 0 ? (forward > .4 ? -17 : -5) : 0);
   const deployed = .35 + .65 * car.transform;
   car.vx += forwardX * thrust * deployed * dt; car.vz += forwardZ * thrust * deployed * dt;
   car.heading += car.steer * .83 * Math.min(1, Math.abs(forward) / 3) * Math.sign(forward || 1) * dt;

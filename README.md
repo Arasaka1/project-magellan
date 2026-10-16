@@ -30,7 +30,9 @@ Open [localhost:8000](http://localhost:8000). Use HTTP rather than opening the H
 | Esc / P | Pause / resume |
 | N | Generate a new world |
 
-Touch devices and compact windows show steering, throttle, reverse, **Jump**, and **Drift** buttons. Camera selection and recovery are also available in the pause menu. The game pauses when the window loses focus. Trip records and sound preference are stored locally. Sound begins muted on the first visit.
+Touch devices and compact windows default to a floating **joystick**: put your left thumb down anywhere in the lower left, drag sideways to steer, push up to accelerate and pull back to brake or reverse. **Jump** and **Drift** sit under the right thumb. The menu switches between Joystick and the original arrow **Buttons**, and a sensitivity slider (50–150%) changes how quickly small joystick movements turn; full deflection is always full lock. A short hint covers the controls on the first drive. Camera selection and recovery are also available in the pause menu. The game pauses when the window loses focus. Trip records and sound preference are stored locally. Sound begins muted on the first visit.
+
+**Graphics** (start and pause menus) offers Low, Medium, High and Auto. Each preset sets render resolution, sun shadow-map size, and grass density and range. Medium matches the previous fixed phone settings (1.35× resolution, 1024 shadows, half grass within 48 m); High matches the previous desktop settings (1.7×, 2048 shadows, full grass within 78 m), and uses up to 2× resolution on phones. **Auto** is the default: it starts phones at Medium and desktops at High, climbs one step (through an intermediate Medium+ level) after 6 seconds of smooth driving, and steps down after 2 seconds of sustained frames slower than about 48 fps. Single streaming hitches and pauses are ignored, and a level that fails twice is not retried during that visit. Auto remembers where it settled for the next visit. `?quality=low|medium|high|auto` overrides the setting; browser tests otherwise use fixed Medium (touch) or High (desktop).
 
 ## Current world and handling
 
@@ -63,8 +65,10 @@ Touch devices and compact windows show steering, throttle, reverse, **Jump**, an
 - `terrain.mjs` / `world-worker.mjs` / `streaming-layout.mjs`: reusable terrain data, background generation and seam-free near/far coverage.
 - `batching.mjs`: static mesh batching utility; the Blender car is already batched during export.
 - `vehicle-presentation.mjs`: interpolates fixed-step poses for smooth car, wheel, camera and shadow motion across display refresh rates.
-- `grass-data.mjs` / `grass.mjs`: background placement and batched near-field plains grass, with reduced mobile density.
-- `shadow-fade.mjs`: fades directional shadows inside the moving shadow-map boundary, preserving nearby contrast and existing mobile/desktop map resolutions.
+- `grass-data.mjs` / `grass.mjs`: background placement and batched near-field plains grass, with density and range set live by the graphics level.
+- `quality.mjs`: Low/Medium/High levels and the Auto frame-time controller.
+- `controls.mjs`: joystick response curve and analog axes shared by the car and boat physics.
+- `shadow-fade.mjs`: fades directional shadows inside the moving shadow-map boundary, preserving nearby contrast at every graphics level's map resolution.
 - `camera-motion.mjs`: integrates camera position, aim and field of view against moving targets without changing follow lag when frame intervals change.
 - `tree-breakage.mjs`: immediate speed-dependent fracture using authored Blender sections, plus a geometry-cutting path for legacy geometry fixtures.
 - `break-audio.mjs`: precomputed wood, cactus and stone effects with capped simultaneous voices.
@@ -163,6 +167,6 @@ Breaking sounds share the engine’s sound toggle (M or the speaker button); mut
 
 Sun shadows fade across the outer 19 m of their moving 96 m map instead of appearing abruptly at its edge. The fade uses light-space coordinates, so it follows all sides of the shadow volume and applies equally to terrain and objects. Rendered-pixel regression tests compare the old hard cutoff with the new transition on all four edges at 1024 and 2048 shadow-map resolutions.
 
-Plains have seeded patches of low grass. Placement reuses terrain triangles in the generation worker and avoids sand, snow, steep slopes, roads and reserved ramp/landmark areas. Three opaque triangles form each tuft; there are no grass colliders, transparent layers or shadow-casting blades. Desktop grass fades from 38–78 m, while touch devices use half the density and a 22–48 m fade. At most nine desktop or four mobile chunk batches are eligible to draw, capped at 43,200 or 9,600 grass triangles before view culling. Chunk buffers are independently owned and disposed during streaming. Preview meadow grass with `?seed=3`.
+Plains have seeded patches of low grass. Placement reuses terrain triangles in the generation worker and avoids sand, snow, steep slopes, roads and reserved ramp/landmark areas. Three opaque triangles form each tuft; there are no grass colliders, transparent layers or shadow-casting blades. High grass fades from 38–78 m; Medium uses half the density and a 22–48 m fade, and Low 30% within 36 m. At most nine High or four Medium chunk batches are eligible to draw, capped at 43,200 or 9,600 grass triangles before view culling. Chunk buffers are independently owned and disposed during streaming. Preview meadow grass with `?seed=3`.
 
 Run `PW_CHANNEL=chrome node scripts/profile-grass.mjs` for a same-scene grass-on/off render-cost comparison (requires the development server). The seed-3 meadow measured +4 draw calls and +10,326 triangles at 960×600 on desktop, and +4 calls / +5,160 triangles at 390×844 with touch emulation. This isolates geometry/render cost; software-renderer timing and touch emulation do not measure real phone FPS.

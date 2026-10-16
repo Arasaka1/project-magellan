@@ -5,6 +5,7 @@ import { createWorld, CHUNK } from '../world.mjs';
 import { createTerrain } from '../terrain.mjs';
 import { buildGrass, MAX_GRASS_PER_CHUNK } from '../grass-data.mjs';
 import { createGrass } from '../grass.mjs';
+import { qualityLevels } from '../quality.mjs';
 
 test('grass is seeded, bounded and follows terrain triangles while leaving roads, sand and ramps clear', () => {
   let total = 0;
@@ -37,7 +38,7 @@ test('grass has no placement in sand, snow or steep terrain', () => {
 
 test('grass render cost, mobile density and buffer ownership remain bounded across streaming', () => {
   const world = createWorld(3), terrain = createTerrain(world), data = buildGrass(world, 0, 0, terrain.build(0, 0, CHUNK, 4));
-  const center = { value: new THREE.Vector2() }, desktop = createGrass(false, center), phone = createGrass(true, center);
+  const center = { value: new THREE.Vector2() }, desktop = createGrass(center), phone = createGrass(center, qualityLevels(true)[1].grass);
   const a = desktop.build(data), b = desktop.build(data), mobile = phone.build(data);
   assert.ok(a && b && mobile);
   assert.equal(a.castShadow, false); assert.equal(a.material.transparent, false);
@@ -54,4 +55,20 @@ test('grass render cost, mobile density and buffer ownership remain bounded acro
     assert.ok(visible <= (system === phone ? 4 : 9));
   }
   a.geometry.dispose(); assert.ok(b.geometry.attributes.position.array.every(Number.isFinite));
+});
+
+test('grass quality changes density and fade range live without rebuilding chunks', () => {
+  const world = createWorld(3), terrain = createTerrain(world), data = buildGrass(world, 0, 0, terrain.build(0, 0, CHUNK, 4));
+  const levels = qualityLevels(true), system = createGrass({ value: new THREE.Vector2() }, levels[3].grass), mesh = system.build(data);
+  const total = mesh.geometry.userData.total;
+  assert.equal(mesh.geometry.instanceCount, total);
+  for (const level of levels) {
+    system.setQuality(level.grass); system.update(mesh, 0, 0, 48, 48);
+    assert.equal(mesh.geometry.instanceCount, Math.floor(total * level.grass.density));
+    assert.equal(system.range, level.grass.range);
+  }
+  system.setQuality(levels[0].grass); system.update(mesh, 1, 0, 46, 48);
+  assert.equal(mesh.visible, false);
+  system.setQuality(levels[3].grass); system.update(mesh, 1, 0, 46, 48);
+  assert.equal(mesh.visible, true);
 });

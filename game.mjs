@@ -1,19 +1,21 @@
-import { createTerrain } from './terrain.mjs?v=amphibious-1';
+import { createTerrain } from './terrain.mjs?v=controls-1';
 import { createWater } from './water.mjs?v=timing-1';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, farIndices, farCoverage } from './streaming-layout.mjs?v=timing-1';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, farIndices, farCoverage } from './streaming-layout.mjs?v=controls-1';
 import { loadVehicleModel } from './vehicle-model.mjs?v=amphibious-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=grass-1';
+import { createDebris } from './debris.mjs?v=controls-1';
 import { createVehiclePresentation } from './vehicle-presentation.mjs?v=alignment-1';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
 import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=grass-1';
 import { installSunShadowFade } from './shadow-fade.mjs?v=grass-1';
-import { createGrass } from './grass.mjs?v=grass-1';
+import { createGrass } from './grass.mjs?v=controls-1';
+import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=controls-1';
+import { controlAxis, stickAxes } from './controls.mjs?v=controls-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=amphibious-1';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=grass-1';
+import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=controls-1';
+import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=controls-1';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -55,12 +57,31 @@ if (new URLSearchParams(location.search).get('test') === 'tree-smash') {
 let running = false, started = false, cameraMode = 0, muted = true, lightsOn = false, bestDistance = 0;
 if (!testMode) try { muted = localStorage.getItem('endless-drive-muted') !== '0'; bestDistance = Number(JSON.parse(localStorage.getItem('endless-drive-records') || '{}').distance) || 0; } catch {}
 const input = {}, keyStates = new Set(), touchStates = new Map();
+// Graphics and touch preferences. Tests use fixed, device-appropriate settings
+// unless ?quality= is given, so slow software rendering never changes a level.
+const settings = { quality: 'auto', steering: 'joystick', sensitivity: 1, autoLevel: null, coached: false };
+if (!testMode) try { Object.assign(settings, JSON.parse(localStorage.getItem('endless-drive-settings') || '{}')); } catch {}
+const qualityParam = new URLSearchParams(location.search).get('quality');
+if (QUALITY_PRESETS.includes(qualityParam)) settings.quality = qualityParam;
+else if (testMode) settings.quality = coarse ? 'medium' : 'high';
+if (!QUALITY_PRESETS.includes(settings.quality)) settings.quality = 'auto';
+if (!['joystick', 'buttons'].includes(settings.steering)) settings.steering = 'joystick';
+settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
+const saveSettings = () => { if (!testMode) try { localStorage.setItem('endless-drive-settings', JSON.stringify(settings)); } catch {} };
+const levels = qualityLevels(coarse);
+let auto = null, qualityLevel = 0;
+function startQuality() {
+  const saved = Number.isInteger(settings.autoLevel) && settings.autoLevel >= 0 && settings.autoLevel < levels.length ? settings.autoLevel : null;
+  auto = settings.quality === 'auto' ? createAutoQuality({ start: saved ?? autoStartLevel(coarse), max: levels.length - 1 }) : null;
+  return auto ? auto.level : presetLevel(settings.quality);
+}
+qualityLevel = startQuality();
 const keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'jump', ShiftLeft: 'brake', ShiftRight: 'brake' };
 
 installSunShadowFade();
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.35 : 1.7));
+renderer.setPixelRatio(Math.min(devicePixelRatio, levels[qualityLevel].pixelRatio));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -78,7 +99,7 @@ const camera = new THREE.PerspectiveCamera(57, innerWidth / innerHeight, .1, 260
 scene.add(new THREE.HemisphereLight('#e4efed', '#787257', 1.6));
 const sun = new THREE.DirectionalLight('#fff0d2', 2.5);
 sun.castShadow = true;
-sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
+sun.shadow.mapSize.setScalar(levels[qualityLevel].shadow);
 Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, near: 1, far: 230 });
 sun.shadow.bias = -.00015; sun.shadow.normalBias = .04;
 scene.add(sun, sun.target);
@@ -108,7 +129,7 @@ scene.add(sky);
 // asphalt now share one surface: no raised ribbons, cuttings, seams or walls.
 const terrainMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
 const streamUniforms = { uStreamCenter: { value: new THREE.Vector2() } };
-const grass = createGrass(coarse, streamUniforms.uStreamCenter);
+const grass = createGrass(streamUniforms.uStreamCenter, levels[qualityLevel].grass);
 const roadUniforms = { uRoadPhase: { value: world.phase } };
 // Geometry is already coarse at the streaming boundary. Moving the boundary
 // therefore changes tessellation only, never the silhouette or lighting.
@@ -386,7 +407,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of farTiles.values()) { scene.remove(tile); tile.geometry.dispose(); } farTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear();
-  worker = new Worker(new URL('./world-worker.mjs?v=timing-1', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=controls-1', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -454,11 +475,18 @@ $('soundBtn').onclick = toggleSound;
 function saveRecord() { bestDistance = Math.max(bestDistance, vehicle.distance); if (!testMode) try { localStorage.setItem('endless-drive-records', JSON.stringify({ distance: bestDistance })); } catch {} }
 let toastTimer;
 function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600); }
-function clearInput() { keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
-function syncInput() { for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k); }
+function clearInput() { releaseStick(false); keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
+function syncInput() {
+  for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k);
+  // Analog axes add to the digital keys; physics clamps the combined value.
+  const axes = stick.pointer === null ? null : stickAxes(stick.x, stick.y, settings.sensitivity);
+  input.steer = axes?.steer; input.throttle = axes?.throttle;
+}
+const throttleInput = () => controlAxis(input.throttle, input.up, input.down);
 function resume() {
   if ($('startBtn').disabled) return;
-  running = true; started = true; resetTiming();
+  running = true; started = true; resetTiming(); auto?.reset(performance.now());
+  if (!settings.coached) { document.body.classList.add('coaching'); clearTimeout(coachTimer); coachTimer = setTimeout(dismissCoach, 9000); }
   $('menu').classList.add('closed'); $('menu').inert = true; $('menu').setAttribute('aria-hidden', 'true');
   $('pauseBtn').hidden = false; document.body.classList.add('driving'); renderer.domElement.focus({ preventScroll: true });
   if (!muted) initAudio();
@@ -539,7 +567,7 @@ addEventListener('blur', () => { clearInput(); pause(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
 addEventListener('beforeunload', saveRecord);
 for (const el of document.querySelectorAll('[data-control]')) {
-  el.addEventListener('pointerdown', e => { e.preventDefault(); if (!running) return; el.setPointerCapture(e.pointerId); if (el.dataset.control === 'jump') vehicle.jumpBuffer = .16; touchStates.set(e.pointerId, el.dataset.control); el.classList.add('active'); syncInput(); });
+  el.addEventListener('pointerdown', e => { e.preventDefault(); if (!running) return; el.setPointerCapture(e.pointerId); dismissCoach(); if (el.dataset.control === 'jump') vehicle.jumpBuffer = .16; touchStates.set(e.pointerId, el.dataset.control); el.classList.add('active'); syncInput(); });
   const release = e => { touchStates.delete(e.pointerId); el.classList.remove('active'); syncInput(); };
   el.addEventListener('pointerup', release); el.addEventListener('pointercancel', release); el.addEventListener('lostpointercapture', release);
 }
@@ -551,6 +579,78 @@ $('menu').addEventListener('keydown', e => {
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
+
+function applyQuality(index) {
+  qualityLevel = index;
+  const level = levels[index];
+  renderer.setPixelRatio(Math.min(devicePixelRatio, level.pixelRatio));
+  if (sun.shadow.mapSize.x !== level.shadow) {
+    sun.shadow.mapSize.setScalar(level.shadow);
+    // Three.js only allocates the shadow target once; release it to resize.
+    sun.shadow.map?.dispose(); sun.shadow.map = null;
+  }
+  grass.setQuality(level.grass);
+  syncSettings();
+}
+const qualityNames = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High' };
+function syncSettings() {
+  const level = levels[qualityLevel].name;
+  $('qualityBtn').textContent = `Graphics: ${qualityNames[settings.quality]}${auto ? ` · ${level === 'medium+' ? 'Medium+' : qualityNames[level]}` : ''}`;
+  $('steeringBtn').textContent = `Steering: ${settings.steering === 'joystick' ? 'Joystick' : 'Buttons'}`;
+  $('sensitivity').value = Math.round(settings.sensitivity * 100);
+  $('sensitivityValue').textContent = `${Math.round(settings.sensitivity * 100)}%`;
+  document.body.classList.toggle('stick-controls', settings.steering === 'joystick');
+  $('touchGuide').textContent = settings.steering === 'joystick' ? 'Left thumb: drag to steer, push up to go, pull back to brake. Right thumb: jump and drift.' : 'Arrows steer, accelerate and brake. Jump and drift sit in the middle.';
+  $('coachText').innerHTML = settings.steering === 'joystick' ? 'Drag anywhere here<br><b>← →</b> steer · <b>↑</b> go · <b>↓</b> brake' : '<b>← →</b> steer · <b>↑</b> go · <b>↓</b> brake';
+}
+$('qualityBtn').onclick = () => {
+  settings.quality = QUALITY_PRESETS[(QUALITY_PRESETS.indexOf(settings.quality) + 1) % QUALITY_PRESETS.length];
+  applyQuality(startQuality()); saveSettings();
+  toast(settings.quality === 'auto' ? 'Auto graphics adjust to your device' : `${qualityNames[settings.quality]} graphics`);
+};
+$('steeringBtn').onclick = () => {
+  settings.steering = settings.steering === 'joystick' ? 'buttons' : 'joystick';
+  saveSettings(); syncSettings(); toast(settings.steering === 'joystick' ? 'Joystick steering' : 'Button steering');
+};
+$('sensitivity').oninput = e => { settings.sensitivity = clamp(Number(e.target.value) / 100, .5, 1.5); saveSettings(); syncSettings(); };
+
+// Floating joystick: it appears under the left thumb wherever it lands, and
+// follows a drag past its rim so reversing direction responds immediately.
+const STICK_RADIUS = 56, stick = { pointer: null, ox: 0, oy: 0, x: 0, y: 0 };
+let coachTimer;
+function dismissCoach() {
+  clearTimeout(coachTimer);
+  if (!document.body.classList.contains('coaching')) return;
+  document.body.classList.remove('coaching');
+  if (!settings.coached) { settings.coached = true; saveSettings(); }
+}
+function drawStick() {
+  const base = $('stick');
+  base.style.left = `${stick.ox}px`; base.style.top = `${stick.oy}px`;
+  base.firstElementChild.style.transform = `translate(${stick.x * STICK_RADIUS}px, ${-stick.y * STICK_RADIUS}px)`;
+}
+function releaseStick(sync = true) {
+  if (stick.pointer === null) return;
+  stick.pointer = null; stick.x = stick.y = 0;
+  const base = $('stick'); base.classList.remove('active'); base.style.left = base.style.top = ''; base.firstElementChild.style.transform = '';
+  if (sync) syncInput();
+}
+function moveStick(e) {
+  let dx = e.clientX - stick.ox, dy = e.clientY - stick.oy;
+  const d = Math.hypot(dx, dy);
+  if (d > STICK_RADIUS) { stick.ox += dx * (1 - STICK_RADIUS / d); stick.oy += dy * (1 - STICK_RADIUS / d); dx *= STICK_RADIUS / d; dy *= STICK_RADIUS / d; }
+  stick.x = dx / STICK_RADIUS; stick.y = -dy / STICK_RADIUS;
+  drawStick(); syncInput();
+}
+$('stickZone').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (!running || stick.pointer !== null) return;
+  $('stickZone').setPointerCapture(e.pointerId);
+  stick.pointer = e.pointerId; stick.ox = e.clientX; stick.oy = e.clientY; stick.x = stick.y = 0;
+  $('stick').classList.add('active'); drawStick(); syncInput(); dismissCoach();
+});
+$('stickZone').addEventListener('pointermove', e => { if (e.pointerId === stick.pointer) moveStick(e); });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) $('stickZone').addEventListener(type, e => { if (e.pointerId === stick.pointer) releaseStick(); });
 
 const mapContext = $('minimap').getContext('2d');
 function drawMap() {
@@ -657,10 +757,11 @@ function render(dt) {
   if (transformation) profiler.measure('transformAnimation', () => transformation.update(pose.transform));
   body.position.y = -pose.impact * .3 * (1 - pose.transform);
   body.rotation.z = -pose.steer * Math.min(Math.abs(pose.speed) / 25, 1) * .055 * (1 - pose.transform);
-  body.rotation.x = (input.up ? -.012 : input.down ? .024 : 0) * (1 - pose.transform);
+  const throttle = throttleInput();
+  body.rotation.x = (throttle > 0 ? -.012 * throttle : -.024 * throttle) * (1 - pose.transform);
   wheelSpinners.forEach(w => w.rotation.x = pose.wheelAngle);
   wheelPivots.forEach(p => { if (p.name.startsWith('Wheel_F')) p.rotation.y = pose.steer * .4 * (1 - pose.transform); });
-  brakeMat.emissiveIntensity = input.down || input.brake ? 2 : .25;
+  brakeMat.emissiveIntensity = throttle < -.05 || input.brake ? 2 : .25;
   car.visible = cameraMode !== 2 || !running;
   contact.position.set(pose.x, world.surface(pose.x, pose.z) + .035, pose.z);
   contact.rotation.set(-Math.PI / 2 + pose.pitch, 0, -pose.heading, 'YXZ');
@@ -680,8 +781,8 @@ function render(dt) {
   profiler.measure('waterUpdate', () => waterSystem.update(world, pose, dt));
   if (audio && running) {
     const t = audio.context.currentTime, speed = Math.abs(vehicle.speed);
-    audio.gain.gain.setTargetAtTime(muted ? 0 : .008 + speed * .00045 + (input.up ? .006 : 0), t, .12);
-    audio.oscillator.frequency.setTargetAtTime(42 + speed * 3.4 + (input.up ? 14 : 0), t, .1);
+    audio.gain.gain.setTargetAtTime(muted ? 0 : .008 + speed * .00045 + Math.max(0, throttle) * .006, t, .12);
+    audio.oscillator.frequency.setTargetAtTime(42 + speed * 3.4 + Math.max(0, throttle) * 14, t, .1);
     audio.filter.frequency.setTargetAtTime(180 + speed * 12, t, .1);
   }
   const renderStarted = performance.now();
@@ -694,6 +795,11 @@ function frame(now) {
   const dt = clamp((now - previousTime) / 1000, 0, .1); previousTime = now;
   if (document.hidden) return;
   if (running) profiler.record('frame', (now - (frame.lastNow || now)));
+  // Auto quality reacts to sustained frame intervals while actually driving.
+  if (auto && running && !loading && drivable() && frame.lastNow) {
+    const next = auto.sample(now - frame.lastNow, now);
+    if (next !== null) { applyQuality(next); settings.autoLevel = next; saveSettings(); }
+  }
   frame.lastNow = now;
   const wasLoading = loading;
   processStreaming();
@@ -725,10 +831,14 @@ function frame(now) {
   render(running ? dt : 0);
   if (running) profiler.record('frameCPU', performance.now() - frameStarted);
 }
-addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+  // Moving between displays can change devicePixelRatio.
+  renderer.setPixelRatio(Math.min(devicePixelRatio, levels[qualityLevel].pixelRatio));
+});
 renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); pause(); toast('Graphics paused. Reload to restore the drive.'); });
 
-syncSeed(); syncSound(); beginWorldLoad(); resetCamera(); updateHUD(); drawMap(); render(0);
+syncSeed(); syncSound(); syncSettings(); beginWorldLoad(); resetCamera(); updateHUD(); drawMap(); render(0);
 requestAnimationFrame(frame);
 
 profiler.record('initialLoad', performance.now() - bootStarted);
@@ -744,5 +854,5 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   }
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
-  return { water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  return { quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, grassDensity: grass.density }, controls: { steering: settings.steering, sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: input.throttle ?? null }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };

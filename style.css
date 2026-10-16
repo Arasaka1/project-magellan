@@ -890,3 +890,118 @@ header,#compass {
 #touch button:disabled { opacity: .35; }
 @media (max-width: 800px) { #rampHint { top: 109px; } #lakeHint { top: 143px; } }
 @media (max-height: 600px) { #rampHint { top: 60px; } #lakeHint { top: 94px; } }
+
+/* Graphics and touch steering preferences, on the start and pause menus. */
+#settingsRow {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px 18px;
+  margin-top:17px;
+}
+#settingsRow button, #settingsRow label {
+  background:none;
+  border:0;
+  border-bottom:1px solid var(--line);
+  padding:5px 0;
+  font-size:11px;
+  color:var(--faint);
+}
+#settingsRow button:hover { color:var(--cream); }
+#settingsRow label { display:flex; align-items:center; gap:8px; }
+#sensitivity { width:92px; accent-color:var(--yellow); }
+#sensitivityValue { min-width:3.2em; color:var(--cream); font-variant-numeric:tabular-nums; }
+#touchGuide {
+  max-width:330px;
+  margin:14px 0 0;
+  font-size:11px;
+  line-height:1.6;
+  color:var(--faint);
+}
+.touch-only, body:not(.stick-controls) .stick-only { display:none!important; }
+body.touch .touch-only:not(.stick-only), body.touch.stick-controls .stick-only { display:flex!important; }
+body.touch p.touch-only { display:block!important; }
+
+/* Floating joystick in the lower left, beneath the right-hand action buttons. */
+#stickZone {
+  display:none;
+  position:fixed;
+  left:0;
+  bottom:0;
+  width:52%;
+  height:58%;
+  z-index:5;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+body.touch.driving.stick-controls #stickZone { display:block; }
+#stick {
+  position:fixed;
+  left:calc(96px + env(safe-area-inset-left));
+  top:calc(100% - 100px - env(safe-area-inset-bottom));
+  width:112px;
+  height:112px;
+  margin:-56px 0 0 -56px;
+  border-radius:50%;
+  border:1px solid var(--line);
+  background:rgba(25,44,36,.3);
+  backdrop-filter:blur(8px);
+  display:grid;
+  place-items:center;
+  opacity:.55;
+  pointer-events:none;
+}
+#stick.active { opacity:1; }
+#stick i {
+  width:46px;
+  height:46px;
+  border-radius:50%;
+  background:rgba(245,241,223,.78);
+  box-shadow:0 2px 12px rgba(20,35,30,.35);
+}
+#stick.active i { background:var(--yellow); }
+body.stick-controls #touch { justify-content:flex-end; }
+body.stick-controls #touch [data-control=left], body.stick-controls #touch [data-control=right],
+body.stick-controls #touch [data-control=up], body.stick-controls #touch [data-control=down] { display:none; }
+body.stick-controls #touch .touch-center { gap:10px!important; }
+body.stick-controls #touch .touch-center button { width:70px!important; height:70px!important; border-radius:50%; font-size:10px; }
+body.touch.stick-controls #mapPanel { bottom:175px; }
+
+/* First drive: a short hint over the controls, dismissed on first touch. */
+#coach {
+  display:none;
+  position:fixed;
+  left:max(20px,env(safe-area-inset-left));
+  bottom:calc(170px + env(safe-area-inset-bottom));
+  z-index:7;
+  pointer-events:none;
+  padding:10px 14px;
+  border:1px solid rgba(233,201,138,.45);
+  border-radius:6px;
+  background:rgba(25,44,36,.82);
+  backdrop-filter:blur(10px);
+  font-size:11px;
+  line-height:1.6;
+  color:var(--cream);
+  animation:coach-pulse 1.6s ease-in-out infinite;
+}
+#coach b { color:var(--yellow); font-weight:600; }
+body.touch.driving.coaching #coach { display:block; }
+body.touch.stick-controls.coaching #mapPanel { opacity:0; }
+body:not(.stick-controls) #coach { bottom:calc(92px + env(safe-area-inset-bottom)); }
+@keyframes coach-pulse { 50% { border-color:rgba(233,201,138,.9); } }
+
+/* Compact windows show touch controls with a mouse too; give them the same layout. */
+@media(max-width:700px) {
+  .touch-only:not(.stick-only), body.stick-controls .stick-only { display:flex!important; }
+  p.touch-only { display:block!important; }
+  body.driving.stick-controls #stickZone { display:block; }
+  body.stick-controls #mapPanel { bottom:175px; }
+  body.driving.coaching #coach { display:block; }
+  body.stick-controls.coaching #mapPanel { opacity:0; }
+}
+@media(max-height:600px) {
+  #touchGuide { display:none!important; }
+  #settingsRow { margin-top:10px; }
+}
