@@ -1,4 +1,4 @@
-import { CHUNK } from './world.mjs?v=physics-2';
+import { CHUNK } from './world.mjs?v=physics-3';
 // Three terrain tiers, each covering 4 × 4 cells of the tier inside it:
 // near chunks (96 m, 4 m grid), far tiles (384 m, 24 m grid) and horizon
 // tiles (1536 m, 96 m grid) that keep mountains on the skyline when flying.

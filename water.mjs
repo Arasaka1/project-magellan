@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waterWave } from './lakes.mjs?v=physics-1';
+import { waterWave } from './lakes.mjs?v=physics-3';
 
 export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { value: 1450 } }, streamCenter = { value: new THREE.Vector2() }) {
   const patches = new Map();

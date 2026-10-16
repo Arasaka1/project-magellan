@@ -1,8 +1,8 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=physics-1';
-import { stepAmphibious } from './amphibious-motion.mjs?v=physics-1';
+import { createLakes, lakeRadius } from './lakes.mjs?v=physics-3';
+import { stepAmphibious } from './amphibious-motion.mjs?v=physics-3';
 import { controlAxis } from './controls.mjs?v=slider-1';
-import { stepFlight } from './flight-motion.mjs?v=physics-2';
+import { stepFlight } from './flight-motion.mjs?v=physics-3';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;
@@ -220,7 +220,7 @@ export function groundAt(world, x, z, heading) {
 export function createVehicle(world, x = 0, z = 0, heading = 0) {
   const g = groundAt(world, x, z, heading);
   const water = world.waterAt?.(x, z), floating = Boolean(water && water.depth > .9);
-  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, alpha: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
+  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
 }
 export function resolveObstacles(car, obstacles, world) {
   for (let pass = 0; pass < 3; pass++) for (const o of obstacles) {
@@ -310,10 +310,24 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
     }
     // Every surface can fall away beneath the car, including ramp backs and
     // sides. Being inside a ramp must never suppress ballistic separation.
-    else if (!car.landLock && horizontal > 9 && car.y + car.vy * dt - 11 * dt * dt > g.y + .018) {
-      car.grounded = false; car.airtime = 0; car.airDistance = 0; car.airRoll = 0; car.vy = clamp(car.vy, -3, 28); car.y += car.vy * dt;
-      launchRoll(car, ramp, Math.abs(rampSpeed));
-    } else { car.y = g.y; car.vy = surfaceVy; }
+    // The ground can push the car up but never pull it down: from the moment
+    // the surface drops away faster than gravity, a ballistic "shadow" follows
+    // the car's own momentum. Once that path clears the surface by a couple of
+    // centimetres the car leaves with its full climbing speed, so a rounded
+    // crest launches just like a sharp one, while small bumps never add up.
+    // (Just after a touchdown it takes a little more, so landings don't bounce.)
+    else {
+      const ballistic = (car.shadow ? car.shadowVy : car.vy) - 22 * dt;
+      if (horizontal > 9 && surfaceVy < ballistic) {
+        if (!car.shadow) car.shadow = 0;
+        car.shadowVy = ballistic; car.shadow += (ballistic - surfaceVy) * dt;
+      } else car.shadow = 0;
+      if (car.shadow > (car.landLock ? .05 : .025)) {
+        car.grounded = false; car.airtime = 0; car.airDistance = 0; car.airRoll = 0;
+        car.vy = clamp(car.shadowVy, -3, 28); car.y = g.y + car.shadow; car.shadow = 0;
+        launchRoll(car, ramp, Math.abs(rampSpeed));
+      } else { car.y = g.y; car.vy = surfaceVy; }
+    }
   } else if (car.y <= g.y && (!car.landLock || car.vy < 0)) {
     car.impact = Math.max(car.impact, clamp(-car.vy * .016, 0, .3));
     car.bestJump = Math.max(car.bestJump, car.airDistance); car.landings++;

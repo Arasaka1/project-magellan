@@ -269,3 +269,27 @@ test('oblique front approaches launch and slow ramp driving stays supported', ()
   const car = createVehicle(world, p.x, p.z, ramp.heading + Math.PI); car.vz = -3;
   for (let i = 0; i < 60; i++) { stepVehicle(car, {}, world, []); assert.equal(car.grounded, true); }
 });
+
+test('ramps launch from the back, the sides and odd angles instead of holding the car down', () => {
+  const world = createWorld(1);
+  for (const ramp of [world.starterRamp, world.twistRamp]) {
+    const target = featurePoint(ramp, 0, ramp.length * .7);
+    for (const offset of [Math.PI, Math.PI * .8, -Math.PI * .8, Math.PI / 2, -Math.PI / 2, Math.PI / 3]) for (const speed of [18, 26, 40]) {
+      const heading = ramp.heading + offset;
+      const car = createVehicle(world, target.x - Math.sin(heading) * 30, target.z - Math.cos(heading) * 30, heading);
+      car.vx = Math.sin(heading) * speed; car.vz = Math.cos(heading) * speed; car.speed = speed;
+      // Climbing an embankment builds upward speed; leaving its top must keep
+      // it, rather than the ground soaking it up and holding the car down.
+      let climbing = 0, launch = 0, peak = 0;
+      for (let i = 0; i < 120 * 2.5; i++) {
+        stepVehicle(car, { up: true }, world, []);
+        const p = featureLocal(ramp, car.x, car.z);
+        if (!(p.along > -2 && p.along < ramp.length + ramp.back + 2 && Math.abs(p.across) < ramp.width / 2 + 9)) continue;
+        if (car.grounded) climbing = Math.max(climbing, car.vy); else { launch = Math.max(launch, car.vy); peak = Math.max(peak, car.y - car.groundY); }
+      }
+      const label = `${ramp.id} from ${(offset * 180 / Math.PI).toFixed(0)}° at ${speed} m/s`;
+      assert.ok(peak > 1.5, `${label} cleared only ${peak.toFixed(2)} m`);
+      assert.ok(launch > climbing * .6, `${label} left at ${launch.toFixed(1)} m/s after climbing at ${climbing.toFixed(1)} m/s`);
+    }
+  }
+});
