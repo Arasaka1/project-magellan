@@ -3,12 +3,13 @@
   "source": "atlas-amphibious.blend",
   "asset": "atlas-amphibious.glb",
   "duration": 2.4,
-  "triangles": 52356,
-  "meshes": 72,
+  "flightDuration": 1.6,
+  "triangles": 63260,
+  "meshes": 96,
   "batching": [
     {
       "group": "Body",
-      "before": 20,
+      "before": 22,
       "after": 7
     },
     {
@@ -28,22 +29,22 @@
     },
     {
       "group": "Hull_L",
-      "before": 35,
+      "before": 36,
       "after": 6
     },
     {
       "group": "Pontoon_L",
-      "before": 8,
+      "before": 9,
       "after": 3
     },
     {
       "group": "Hull_R",
-      "before": 35,
+      "before": 36,
       "after": 6
     },
     {
       "group": "Pontoon_R",
-      "before": 8,
+      "before": 9,
       "after": 3
     },
     {
@@ -58,8 +59,28 @@
     },
     {
       "group": "Keel_Deploy",
-      "before": 3,
+      "before": 2,
       "after": 2
+    },
+    {
+      "group": "Prop_Hub",
+      "before": 2,
+      "after": 2
+    },
+    {
+      "group": "BladeFold_1",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "BladeFold_2",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "BladeFold_3",
+      "before": 1,
+      "after": 1
     },
     {
       "group": "Spare mount",
@@ -70,6 +91,71 @@
       "group": "Stern_Deck",
       "before": 6,
       "after": 4
+    },
+    {
+      "group": "TailBoom1_L",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "TailBoom2_L",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "Tail_Stabilizer",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "TailFin_L",
+      "before": 2,
+      "after": 2
+    },
+    {
+      "group": "TailBoom1_R",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "TailBoom2_R",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "TailFin_R",
+      "before": 2,
+      "after": 2
+    },
+    {
+      "group": "WingSeg1_L",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "WingSeg2_L",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "WingSeg3_L",
+      "before": 3,
+      "after": 3
+    },
+    {
+      "group": "WingSeg1_R",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "WingSeg2_R",
+      "before": 1,
+      "after": 1
+    },
+    {
+      "group": "WingSeg3_R",
+      "before": 3,
+      "after": 3
     },
     {
       "group": "Spinner_FL",
@@ -108,5 +194,24 @@
     "WheelFold_FR",
     "WheelFold_RL",
     "WheelFold_RR"
+  ],
+  "flightParts": [
+    "Prop_Hub",
+    "BladeFold_1",
+    "BladeFold_2",
+    "BladeFold_3",
+    "TailBoom1_L",
+    "TailBoom2_L",
+    "Tail_Stabilizer",
+    "TailFin_L",
+    "TailBoom1_R",
+    "TailBoom2_R",
+    "TailFin_R",
+    "WingSeg1_L",
+    "WingSeg2_L",
+    "WingSeg3_L",
+    "WingSeg1_R",
+    "WingSeg2_R",
+    "WingSeg3_R"
   ]
 }

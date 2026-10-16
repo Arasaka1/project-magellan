@@ -66,7 +66,9 @@ test('Blender vehicle loads, steers, spins its wheels and switches its lamps', a
   const errors = await openGame(page, 3);
   const initial = await snapshot(page);
   expect(initial.carAsset.ready).toBe(true); expect(initial.carAsset.error).toBeNull();
-  expect(initial.carAsset.triangles).toBeLessThan(90000); expect(initial.carMeshes).toBeLessThanOrEqual(80);
+  expect(initial.carAsset.triangles).toBeLessThan(90000); expect(initial.carMeshes).toBeLessThanOrEqual(110);
+  // Stowed boat and plane parts are hidden, so driving keeps the car's draw budget.
+  expect(initial.carDraws).toBeLessThanOrEqual(72);
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
   await page.keyboard.press('KeyL');
   await expect.poll(async () => (await snapshot(page)).carAsset.headlights).toBe(2);
@@ -95,7 +97,7 @@ test('worker loading, actual WebGL rendering, and stationary scenery stay stable
   const state = await snapshot(page);
   expect(state.grass.tufts).toBeGreaterThan(0); expect(state.grass.meshes).toBeLessThanOrEqual(9);
   expect(state.grass.tufts * 3).toBeLessThanOrEqual(43200);
-  expect(state.loading).toBe(false); expect(state.carMeshes).toBeLessThan(80); expect(state.farTiles).toBe(81);
+  expect(state.loading).toBe(false); expect(state.carDraws).toBeLessThanOrEqual(72); expect(state.farTiles).toBe(81);
   expect(state.natureAsset.ready).toBe(true); expect(state.natureAsset.error).toBeNull();
   expect(state.natureAsset.assets).toHaveLength(8);
   expect(state.natureAsset.instances.tree).toBeGreaterThan(10); expect(state.natureAsset.instances.rock).toBeGreaterThan(0);
