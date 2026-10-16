@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=physics-3';
+import { waterWave } from './lakes.mjs?v=physics-9';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -118,22 +118,30 @@ function taxi(car, input, world, dt, groundAt) {
   retractHulls(car, dt);
   // Rotate at lift-off speed (holding Climb a little sooner): the nose comes
   // up to a flying angle of attack, and the wings take the weight.
-  if (speed > TAKEOFF_SPEED - (climbInput > 0 ? 4 : 0)) { startFlying(car, .03); car.vy = 1; rotateNose(car, -.16); }
+  if (speed > TAKEOFF_SPEED - (climbInput > 0 ? 4 : 0)) { startFlying(car, .03); car.vy = 1; rotateNose(car, -.16); car.climbOut = true; }
   return true;
 }
 
 function rotateNose(car, angle) { setAttitude(car, qMul([car.qx, car.qy, car.qz, car.qw], qAxis(angle, 0, 0))); }
 
-// Touching down with the wings still out and a gentle arrival rolls on as a
-// taxiing plane (it can take off again). A hard, steep or rolled arrival, or
-// one after LAND, becomes the car (or boat) at once.
+// At flying speed a contact with ground or water is a bounce or a skim: the
+// plane keeps flying, loses some speed, and is knocked back toward level
+// (righted if it was rolled past 90°). Below lift-off speed it lands: on the
+// ground as the car, on deep water as the boat, folding its wings as it goes.
+// (A take-off run never comes through here: taxiing has its own physics.)
 function touchdown(car, ground, water) {
-  const mast = rotate([car.qx, car.qy, car.qz, car.qw], [0, 1, 0]);
-  const hard = -car.vy > 7 || mast[1] < .7 || car.climb < -.35;
-  if (car.flightMode && !hard) {
-    car.flying = false; car.y = ground; car.vy = 0; car.sink = 0; car.airtime = 0; car.airDistance = 0;
-    car.grounded = !water; car.floating = Boolean(water);
-    car.impact = Math.max(car.impact, .05);
+  if (!car.flightMode) { land(car, ground, water); return; }
+  const descent = -car.vy;
+  car.impact = Math.max(car.impact, clamp(descent * .02, .05, .3));
+  if (car.airspeed >= TAKEOFF_SPEED) {
+    const hard = descent > 7;
+    car.y = ground + .05;
+    car.vy = hard ? Math.min(descent * .3, 6) : Math.max(car.vy, 0);
+    const scrub = hard ? .82 : .97; car.vx *= scrub; car.vz *= scrub;
+    // Deflected by the ground: never pointing into it, never upside down.
+    const nose = rotate([car.qx, car.qy, car.qz, car.qw], [0, 0, 1]), mast = rotate([car.qx, car.qy, car.qz, car.qw], [0, 1, 0]);
+    if (nose[1] < 0 || mast[1] < 0) setAttitude(car, attitudeFromEuler(Math.atan2(car.vx, car.vz), -.05, mast[1] < 0 ? 0 : car.roll));
+    car.airspeed = Math.hypot(car.vx, car.vy, car.vz); car.climb = Math.asin(clamp(car.vy / (car.airspeed || 1), -1, 1));
     return;
   }
   land(car, ground, water);
@@ -177,20 +185,19 @@ function fly(car, input, world, dt, groundAt) {
   const authority = (.35 + .65 * wings) * clamp(speed / 30, .3, 1) * Math.sqrt(rho);
   const bank = Math.atan2(wing[1], mast[1]); // 0 level, + right wing down, ±π inverted
   let pitchRate = pitch * PITCH_RATE, rollRate = -roll * ROLL_RATE, yawRate = yaw * YAW_RATE;
-  // Dihedral: released, slightly banked wings drift back level. Not once
-  // steeply banked or inverted, and not during a pull.
-  if (!roll && !pitch && Math.abs(bank) < 1.2) rollRate = -clamp(bank, -1, 1) * .5 * wings;
-  // Take-off climb-out: hands off and close to the ground the nose comes up
-  // to climb away; it levels off again only a climb it started itself.
+  // Released controls leave the attitude alone: no wing levelling, no pull
+  // up. The only exception is the climb-out right after a take-off from the
+  // ground or water: hands off, the nose comes up to about 35 m and levels.
+  // Any pitch input, or reaching that height, ends it for the rest of the flight.
   const height = car.y - below, pathAngle = Math.asin(clamp(dir[1], -1, 1));
-  if (pitch) car.climbOut = false;
-  else if (mast[1] > .5 && car.flightMode && height < SAFE_ALTITUDE) {
+  if (pitch || mast[1] < .5) car.climbOut = false;
+  else if (car.climbOut && height < SAFE_ALTITUDE) {
     const target = .22 * clamp((SAFE_ALTITUDE - height) / SAFE_ALTITUDE, 0, 1);
-    if (target > pathAngle) { pitchRate = (target - pathAngle) * 2.5 + .3; car.climbOut = true; }
-  } else if (mast[1] > .5 && car.climbOut && height < SAFE_ALTITUDE * 2) {
+    if (target > pathAngle) pitchRate = (target - pathAngle) * 2.5 + .3;
+  } else if (car.climbOut && height < SAFE_ALTITUDE * 2) {
     pitchRate = -pathAngle * 1.5;
     if (Math.abs(pathAngle) < .02) car.climbOut = false;
-  }
+  } else car.climbOut = false;
   q = qMul(q, qAxis(-pitchRate * authority * dt, yawRate * authority * dt, rollRate * authority * dt));
   // Stability and trim: the tail swings the nose back toward the angle of
   // attack at which lift balances weight on the current flight path (and,
@@ -225,13 +232,52 @@ function fly(car, input, world, dt, groundAt) {
   car.groundY = g.y; car.waterDepth = water?.depth ?? 0; car.waterLevel = water?.level ?? null;
   car.maxAltitude = Math.max(car.maxAltitude, car.y - g.y);
   if (car.y <= ground) touchdown(car, ground, deep);
+  else if (car.flying) scrape(car, world);
   return true;
+}
+
+// The plane's extremities, in model coordinates (+x left wing, +y up, +z
+// nose; the model origin is at the wheels' contact plane). The wingtips move
+// out as the wings telescope.
+const PIVOT = 1; // the renderer rotates the model about (0, 1, 0)
+function extremities(car) {
+  const span = 1 + 2.75 * smoothstep(0, 1, car.flight);
+  return [{ p: [span, 1.18, -.2], side: 1 }, { p: [-span, 1.18, -.2], side: -1 },
+    { p: [.92, 2.42, -4.3], tail: true }, { p: [-.92, 2.42, -4.3], tail: true }, { p: [0, 1.46, -4.4], tail: true }, { p: [0, .98, 2.9], nose: true }];
+}
+// Lowest clearance of the wings, tail and propeller over ground or water
+// (negative when buried). Exported for tests.
+export function wingClearance(car, world) {
+  const q = [car.qx, car.qy, car.qz, car.qw];
+  let lowest = { depth: -Infinity };
+  for (const point of extremities(car)) {
+    const r = rotate(q, [point.p[0], point.p[1] - PIVOT, point.p[2]]);
+    const x = car.x + r[0], y = car.y + PIVOT + r[1], z = car.z + r[2];
+    const water = world.waterAt?.(x, z), floor = water ? water.level : world.surface(x, z);
+    if (floor - y > lowest.depth) lowest = { depth: floor - y, point };
+  }
+  return lowest;
+}
+// A wingtip, tail or propeller touching the ground (or water) ends the
+// flight: the wings fold and it falls the rest of the way as the car, and
+// lands with the normal car (or, in deep water, boat) physics. It is lifted
+// just clear first, so nothing is left buried in the terrain.
+function scrape(car, world) {
+  const { depth } = wingClearance(car, world);
+  if (!(depth > 0)) return;
+  car.y += depth;
+  car.flying = false; car.flightMode = false; car.grounded = false; car.floating = false;
+  car.vx *= .9; car.vz *= .9; car.vy = Math.min(car.vy, 0);
+  car.airtime = 0; car.airDistance = 0; car.rollVelocity = 0; car.landLock = 0; car.coyote = 0;
+  car.impact = Math.max(car.impact, .3); car.wingCrashes = (car.wingCrashes || 0) + 1; car.crashFold = true;
 }
 
 // Returns true when it moved the car this tick. Otherwise the car or boat
 // physics run as usual (while the wings unfold on the ground, or fold away).
 export function stepFlight(car, input, world, dt, groundAt) {
-  car.flight = clamp(car.flight + (car.flightMode ? dt : -dt) / FLIGHT_TRANSFORM_SECONDS, 0, 1);
+  // After a wingtip strike the wings snap shut much faster than a normal fold.
+  car.flight = clamp(car.flight + (car.flightMode ? dt : -dt * (car.crashFold ? 3.5 : 1)) / FLIGHT_TRANSFORM_SECONDS, 0, 1);
+  if (car.flight === 0 || car.flightMode) car.crashFold = false;
   if (!car.flying) {
     // A jumping car with its wings half out starts to glide.
     if (car.flightMode && car.flight >= .35 && !car.grounded && !car.floating) startFlying(car);
@@ -239,4 +285,56 @@ export function stepFlight(car, input, world, dt, groundAt) {
     else return false;
   }
   return fly(car, input, world, dt, groundAt);
+}
+
+// Wings against scenery. Each wing is a segment from its root to its tip
+// (telescoped to the current span), tested against trees, cacti, rocks and
+// boulders at the height it is actually flying. Breakable props shatter
+// through the usual breakage events. The struck wing is dragged back: the
+// plane yaws toward that side, drops that wing and loses speed, more for a
+// strike near the tip and for heavier objects. An unbroken boulder shoves the
+// plane away. Returns the number of strikes this step.
+const WING_REACH = { tree: 1.25, cactus: .8, rock: .55, boulder: 1.5 }; // × prop size: canopy, not trunk
+const STRIKE = { tree: { scrub: .93, yaw: .16, roll: .22 }, cactus: { scrub: .96, yaw: .08, roll: .1 },
+  rock: { scrub: .95, yaw: .1, roll: .14 }, boulder: { scrub: .8, yaw: .3, roll: .35 } };
+function worldPoint(car, q, p) {
+  const r = rotate(q, [p[0], p[1] - PIVOT, p[2]]);
+  return [car.x + r[0], car.y + PIVOT + r[1], car.z + r[2]];
+}
+export function wingStrikes(car, obstacles, world) {
+  if (car.flight < .3 || !obstacles?.length) return 0; // flying or taxiing with the wings out
+  const span = 1 + 2.75 * smoothstep(0, 1, car.flight);
+  let strikes = 0;
+  for (const side of [1, -1]) { // +1 is the left wing (+x)
+    const q = [car.qx, car.qy, car.qz, car.qw];
+    const root = worldPoint(car, q, [side, 1.18, -.2]), tip = worldPoint(car, q, [side * span, 1.18, -.2]);
+    const dx = tip[0] - root[0], dz = tip[2] - root[2], length2 = dx * dx + dz * dz || 1e-9;
+    for (const o of obstacles) {
+      const reach = (WING_REACH[o.type] ?? 0) * (o.size || 1);
+      if (!reach || world.brokenProps?.has(o.id)) continue;
+      const t = clamp(((o.x - root[0]) * dx + (o.z - root[2]) * dz) / length2, 0, 1);
+      const px = root[0] + dx * t, pz = root[2] + dz * t, py = root[1] + (tip[1] - root[1]) * t;
+      const gap = Math.hypot(px - o.x, pz - o.z);
+      if (gap > reach || py < o.y - .3 || py > o.y + o.h) continue;
+      const speed = Math.hypot(car.vx, car.vy, car.vz), heavy = o.type === 'boulder';
+      const broke = speed >= (heavy ? 26 : 12) && Boolean(world.breakProp);
+      if (broke) world.breakProp(o, car.vx, car.vz);
+      const effect = STRIKE[o.type], lever = (1 + t * (span - 1)) / span; // 0 at the body, 1 at the tip
+      const scrub = broke ? effect.scrub : Math.min(effect.scrub, .7);
+      car.vx *= scrub; car.vz *= scrub; car.vy *= scrub;
+      // The drag on one wing swings the nose toward it and drops that wing.
+      const yaw = side * effect.yaw * lever * (broke ? 1 : 1.6), roll = -side * effect.roll * lever * (broke ? 1 : 1.6);
+      setAttitude(car, qMul(q, qAxis(0, yaw, roll)));
+      const turn = yaw * .5, c = Math.cos(turn), sn = Math.sin(turn); // the flight path bends a little too
+      [car.vx, car.vz] = [car.vx * c + car.vz * sn, -car.vx * sn + car.vz * c];
+      if (!broke) { // shoved clear of an unbroken boulder
+        const away = Math.hypot(px - o.x, pz - o.z) || 1, push = reach - gap + .05;
+        car.x += (px - o.x) / away * push; car.z += (pz - o.z) / away * push;
+      }
+      car.impact = Math.max(car.impact, heavy ? .3 : .18);
+      car.airspeed = Math.hypot(car.vx, car.vy, car.vz); car.wingStrikes = (car.wingStrikes || 0) + 1; strikes++;
+      break; // one strike per wing per step; the attitude has changed
+    }
+  }
+  return strikes;
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorld, createVehicle, stepVehicle, FIXED_DT } from '../world.mjs';
-import { toggleFlight, rotate, attitudeFromEuler, liftCoefficient, airDensity, TAKEOFF_SPEED, STALL_SPEED, CEILING, FLIGHT_TRANSFORM_SECONDS } from '../flight-motion.mjs';
+import { toggleFlight, rotate, attitudeFromEuler, wingClearance, liftCoefficient, airDensity, TAKEOFF_SPEED, STALL_SPEED, CEILING, FLIGHT_TRANSFORM_SECONDS } from '../flight-motion.mjs';
 
 const world = createWorld(3);
 function run(car, input, seconds, each) {
@@ -87,7 +87,8 @@ test('a bank alone barely turns; banking and pulling turns hard', () => {
   const lazy = high(airborne()), h0 = lazy.heading;
   run(lazy, { rollLeft: true }, .5); run(lazy, {}, 3);
   const lazyTurn = lazy.heading - h0;
-  assert.ok(Math.abs(lazy.roll) < .4, `wings drift back level: ${lazy.roll}`);
+  assert.ok(lazy.roll < -.6, `the bank is held when released: ${lazy.roll}`);
+  assert.ok(lazyTurn > 0, 'a held bank turns gently');
   const pulled = high(airborne()), h1 = pulled.heading;
   run(pulled, { rollLeft: true }, .5); run(pulled, { pitchUp: true }, 3);
   assert.ok(pulled.heading - h1 > .6 && pulled.heading - h1 > lazyTurn * 2, `pulled ${pulled.heading - h1} vs ${lazyTurn}`);
@@ -100,7 +101,7 @@ test('holding roll performs a full barrel roll and the plane flies on', () => {
   run(car, { rollRight: true }, 2.9, c => { lowest = Math.min(lowest, mastUp(c)); });
   assert.ok(lowest < -.9, `rolled inverted: ${lowest}`);
   run(car, {}, 3);
-  assert.equal(car.flying, true); assert.ok(mastUp(car) > .9 && Math.abs(car.y - start) < 150);
+  assert.equal(car.flying, true); assert.ok(Math.abs(car.y - start) < 150);
 });
 
 test('a pull climbs and the path then holds; holding it at full power flies a loop', () => {
@@ -138,13 +139,52 @@ test('idle power and a pull stall the wing; the nose drops and power recovers it
   assert.ok(peak > CEILING - 100 && peak < CEILING + 250, `peak ${peak}`);
 });
 
-test('touching down gently with the wings out rolls on as a plane, not a car', () => {
-  const car = airborne(); car.vy = -1; car.y = world.surface(car.x, car.z) + .2;
+test('touching down below lift-off speed lands: as the car on ground, as the boat on deep water', () => {
+  const car = airborne(), speed = 24;
+  Object.assign(car, { vx: Math.sin(car.heading) * speed, vz: Math.cos(car.heading) * speed, vy: -1, airspeed: speed, y: world.surface(car.x, car.z) + .2, climbOut: false });
   [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(car.heading, -.05, 0);
-  run(car, {}, .1);
-  assert.equal(car.flying, false); assert.equal(car.flightMode, true); assert.equal(car.flight, 1);
-  run(car, { up: true }, 4);
-  assert.equal(car.flying, true, 'and takes off again');
+  run(car, {}, .3);
+  assert.equal(car.flying, false); assert.equal(car.flightMode, false); assert.equal(car.grounded, true);
+  run(car, {}, FLIGHT_TRANSFORM_SECONDS + .1);
+  assert.equal(car.flight, 0, 'the wings fold away');
+  const lake = world.starterLake, boat = airborne();
+  Object.assign(boat, { x: lake.x, z: lake.z, heading: 0, vx: 0, vz: speed, vy: -1, airspeed: speed, y: lake.level - .4, climbOut: false });
+  [boat.qx, boat.qy, boat.qz, boat.qw] = attitudeFromEuler(0, -.05, 0);
+  run(boat, {}, .3);
+  assert.equal(boat.flying, false); assert.equal(boat.flightMode, false); assert.equal(boat.floating, true);
+  let hulls = 0; run(boat, {}, 3, c => { hulls = Math.max(hulls, c.transform); });
+  assert.ok(hulls > .9, 'the hulls deploy');
+  // A take-off run on the ground is not a landing: it still taxis to lift-off.
+  const runway = createVehicle(world); toggleFlight(runway);
+  run(runway, {}, FLIGHT_TRANSFORM_SECONDS + .1);
+  run(runway, { up: true }, 6);
+  assert.equal(runway.flying, true);
+});
+
+test('at flying speed the ground never turns the plane into a car: it bounces or skims and flies on', () => {
+  for (const [label, pitch, roll, vy] of [['skim', -.05, 0, -1], ['steep dive', .5, 0, -30], ['hard flat', 0, 0, -15]]) {
+    const car = airborne(), speed = 70, start = world.surface(car.x, car.z);
+    Object.assign(car, { vx: Math.sin(car.heading) * speed, vz: Math.cos(car.heading) * speed, vy, airspeed: Math.hypot(speed, vy), y: start + .3 });
+    [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(car.heading, pitch, roll);
+    run(car, { up: true }, .2);
+    assert.equal(car.flightMode, true, label); assert.equal(car.flying, true, `${label} still flying`);
+    assert.ok(car.airspeed > 45, `${label} keeps most of its speed: ${car.airspeed}`);
+    assert.ok(mastUp(car) > 0, `${label} ends upright`);
+    run(car, { up: true }, 3);
+    assert.ok(car.flying && car.y > world.surface(car.x, car.z) + 2, `${label} flies on`);
+  }
+  // Upside down, the fins and wings reach the ground first: that ends the flight.
+  const flipped = airborne(), speed = 70;
+  Object.assign(flipped, { vx: Math.sin(flipped.heading) * speed, vz: Math.cos(flipped.heading) * speed, vy: -6, airspeed: speed, y: world.surface(flipped.x, flipped.z) + 1.5, climbOut: false });
+  [flipped.qx, flipped.qy, flipped.qz, flipped.qw] = attitudeFromEuler(flipped.heading, 0, Math.PI);
+  run(flipped, {}, .3);
+  assert.equal(flipped.flightMode, false, 'inverted ground contact turns it into the car');
+  // Skimming across water at speed is the same: no splashdown into boat mode.
+  const lake = world.starterLake, boat = airborne();
+  Object.assign(boat, { x: lake.x, z: lake.z - lake.rz * .6, heading: 0, vx: 0, vz: 70, vy: -3, airspeed: 70, y: lake.level - .4 });
+  [boat.qx, boat.qy, boat.qz, boat.qw] = attitudeFromEuler(0, 0, 0);
+  run(boat, { up: true }, .3);
+  assert.ok(boat.flying && boat.flightMode && boat.transform === 0, 'skims the lake and flies on');
 });
 
 test('folding the wings in the air glides down to a drivable landing', () => {
@@ -185,4 +225,71 @@ test('a jumping car with its wings half out starts to glide', () => {
   toggleFlight(car);
   run(car, {}, FLIGHT_TRANSFORM_SECONDS * .4);
   assert.equal(car.flying, true);
+});
+
+test('a wingtip touching the ground ends the flight: it becomes the car and lands, never buried', () => {
+  for (const side of ['rollLeft', 'rollRight']) {
+    const car = airborne();
+    [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(car.heading, 0, 0);
+    Object.assign(car, { vx: Math.sin(car.heading) * 60, vz: Math.cos(car.heading) * 60, vy: -2, y: world.surface(car.x, car.z) + 1.5, climbOut: false });
+    let lowest = Infinity, crashed = false;
+    run(car, { [side]: true, up: true }, .8, c => {
+      if (c.flightMode) lowest = Math.min(lowest, -wingClearance(c, world).depth);
+      if (c.wingCrashes) crashed = true;
+    });
+    assert.ok(crashed, `${side}: the wingtip touched down`);
+    assert.ok(lowest > -1e-6, `${side}: never buried while a plane (${-lowest} m)`);
+    assert.equal(car.flightMode, false); assert.equal(car.flying, false);
+    run(car, {}, 3);
+    assert.ok(car.grounded && car.flight === 0, `${side}: lands as the car with its wings folded`);
+  }
+});
+
+test('wings break trees and boulders, and a strike swings the plane toward the struck wing', () => {
+  const strike = (lateral, type, speed, height = 2.4, ahead = 12) => {
+    const car = airborne(), h = car.heading;
+    const x = car.x + Math.sin(h) * ahead + Math.cos(h) * lateral, z = car.z + Math.cos(h) * ahead - Math.sin(h) * lateral, ground = world.surface(x, z);
+    [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(h, 0, 0);
+    Object.assign(car, { vx: Math.sin(h) * speed, vz: Math.cos(h) * speed, vy: 0, y: ground + height, airspeed: speed });
+    const prop = { id: `wing-test:${type}:${lateral}:${speed}:${height}`, type, x, z, y: ground, size: 1, h: type === 'tree' ? 6.8 : 2.6, r: type === 'tree' ? .24 : 1.5 };
+    const start = { heading: h };
+    for (let i = 0; i < 120 * .5; i++) stepVehicle(car, {}, world, [prop]);
+    return { car, broken: world.brokenProps.has(prop.id), turned: Math.atan2(Math.sin(car.heading - start.heading), Math.cos(car.heading - start.heading)), speed: Math.hypot(car.vx, car.vz) };
+  };
+  // +x is the left wing: a tree under it breaks, the nose swings left and the
+  // left wing drops; the right wing is the mirror image.
+  const left = strike(3, 'tree', 60), right = strike(-3, 'tree', 60);
+  assert.ok(left.broken && right.broken);
+  assert.ok(left.turned > .05 && right.turned < -.05, `yaw ${left.turned} / ${right.turned}`);
+  assert.ok(left.car.roll < -.05 && right.car.roll > .05, `roll ${left.car.roll} / ${right.car.roll}`);
+  assert.ok(left.speed < 58 && left.car.flying && left.car.flightMode);
+  // A tip strike yanks harder than one near the wing root.
+  const root = strike(1.4, 'tree', 60);
+  assert.ok(Math.abs(root.turned) < Math.abs(left.turned), `root ${root.turned} vs tip ${left.turned}`);
+  // A boulder is heavier than a tree; flying well above it misses it.
+  const rock = strike(3, 'boulder', 60, .5, 8);
+  assert.ok(rock.broken && rock.speed < left.speed && Math.abs(rock.turned) > Math.abs(left.turned));
+  const above = strike(3, 'tree', 60, 9);
+  assert.ok(!above.broken && Math.abs(above.turned) < .01, 'clears the canopy');
+});
+
+test('released controls keep the attitude: a dive stays a dive, a bank stays a bank, even low down', () => {
+  const dive = high(airborne(), 70);
+  run(dive, { pitchDown: true }, .8);
+  const angle = dive.climb;
+  assert.ok(angle < -.2);
+  run(dive, {}, 2);
+  assert.ok(dive.climb < angle + .05, `kept diving: ${angle} -> ${dive.climb}`);
+  const bank = high(airborne(), 70);
+  run(bank, { rollRight: true }, .5);
+  const rolled = bank.roll;
+  run(bank, {}, 3);
+  assert.ok(bank.roll > rolled * .8, `kept its bank: ${rolled} -> ${bank.roll}`);
+  // No hands-off pull-up near the ground either (that is only for take-off).
+  const low = high(airborne(), 70);
+  low.y = world.surface(low.x, low.z) + 30;
+  run(low, { pitchDown: true }, .4);
+  const lowAngle = low.climb;
+  run(low, {}, .6);
+  assert.ok(low.climb < lowAngle + .05, `not pulled up: ${lowAngle} -> ${low.climb}`);
 });
