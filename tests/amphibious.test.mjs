@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorld, createVehicle, stepVehicle, recoverVehicle, FIXED_DT } from '../world.mjs';
-import { createLakes } from '../lakes.mjs';
+import { createLakes, lakeRadius, lakeExtent } from '../lakes.mjs';
 const advance = (car, world, seconds, input = {}) => {
   for (let i = 0; i < Math.round(seconds / FIXED_DT); i++) stepVehicle(car, input, world, []);
 };
@@ -51,8 +51,12 @@ test('mountain lakes have closed downhill shores and leave nearby roads dry', ()
   for (const seed of [12345, 483921, 999999]) {
     const world = createWorld(seed);
     for (const lake of world.lakesNear(0, 0, 2500)) for (let i = 0; i < 64; i++) {
-      const a = i * Math.PI / 32, x = lake.x + Math.sin(a) * lake.rx * 1.019, z = lake.z + Math.cos(a) * lake.rz * 1.019;
+      // Follow each basin's own (irregular, for seas) shoreline just outside the rim.
+      const a = i * Math.PI / 32, unit = { x: lake.x + Math.sin(a) * lake.rx, z: lake.z + Math.cos(a) * lake.rz };
+      const shape = 1 / lakeRadius(lake, unit.x, unit.z);
+      const x = lake.x + Math.sin(a) * lake.rx * 1.019 * shape, z = lake.z + Math.cos(a) * lake.rz * 1.019 * shape;
       assert.ok(world.surface(x, z) > lake.level, `closed rim: ${seed} ${lake.id}`);
+      if (lake.sea) continue; // roads deliberately run down into the seas
       const road = world.roadAt(x, z);
       assert.equal(world.waterAt(road.x, road.z), null, `dry road: ${seed} ${lake.id}`);
     }
@@ -85,4 +89,43 @@ test('airborne entry does not transform until contact, and recovery restores a d
   assert.ok(recoverVehicle(car, world));
   assert.equal(world.waterAt(car.x, car.z), null); assert.equal(car.transform, 0);
   assert.equal(car.floating, false); assert.equal(car.boatDistance, distance);
+});
+
+test('inland seas are large, irregular, deep, clear of ponds, and start a kilometre from spawn', () => {
+  for (const seed of [3, 12345, 483921]) {
+    const world = createWorld(seed), sea = world.starterSea;
+    assert.ok(sea && sea.sea);
+    const shoreDistance = Math.hypot(sea.x, sea.z) - lakeExtent(sea);
+    assert.ok(shoreDistance > 900 && shoreDistance < 1800, `starter sea shore ${shoreDistance} m from spawn`);
+    const seas = world.lakesNear(0, 0, 9000).filter(l => l.sea), ponds = world.lakesNear(0, 0, 9000).filter(l => !l.sea);
+    assert.ok(seas.length >= 3, `${seas.length} seas within 9 km`);
+    for (const s of seas) {
+      // Far bigger than a pond: open water across most of a kilometre or more.
+      assert.ok(Math.min(s.rx, s.rz) >= 420 && lakeExtent(s) < 830);
+      let wet = 0, deep = 0, n = 0;
+      for (let u = -.8; u <= .8; u += .2) for (let v = -.8; v <= .8; v += .2) {
+        const x = s.x + u * s.rx, z = s.z + v * s.rz; if (Math.hypot(u, v) > .8) continue;
+        const water = world.waterAt(x, z); n++; if (water) wet++; if (water?.depth > 5) deep++;
+      }
+      assert.ok(wet / n > .95 && deep / n > .6, `${s.id} open water ${wet}/${n}, deep ${deep}`);
+      // Bays and headlands: the shoreline radius varies around the coast.
+      const radii = Array.from({ length: 36 }, (_, i) => 1 / lakeRadius(s, s.x + Math.sin(i / 36 * Math.PI * 2) * s.rx, s.z + Math.cos(i / 36 * Math.PI * 2) * s.rz));
+      assert.ok(Math.max(...radii) - Math.min(...radii) > .08, `${s.id} irregular shore`);
+      for (const pond of ponds) assert.ok(Math.hypot(pond.x - s.x, pond.z - s.z) > lakeExtent(s) * 1.5 + 300, `${pond.id} clear of ${s.id}`);
+    }
+    // Revisited terrain and water are identical after the basin caches cycle.
+    const before = world.surface(sea.x + 300, sea.z - 200);
+    world.lakesNear(60000, -40000, 9000);
+    assert.equal(createWorld(seed).surface(sea.x + 300, sea.z - 200), before);
+  }
+});
+
+test('a car driving off the coast into a sea becomes a boat and can cruise on it', () => {
+  const world = createWorld(3), sea = world.starterSea;
+  // Start on the shore, facing the middle of the sea.
+  const heading = Math.atan2(sea.x - 0, sea.z - 0), start = { x: sea.x - Math.sin(heading) * lakeExtent(sea) * 1.25, z: sea.z - Math.cos(heading) * lakeExtent(sea) * 1.25 };
+  const car = createVehicle(world, start.x, start.z, heading);
+  assert.equal(car.floating, false);
+  advance(car, world, 60, { up: true });
+  assert.equal(car.boatMode, true); assert.ok(car.boatDistance > 200, `boat distance ${car.boatDistance}`);
 });

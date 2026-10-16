@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waterWave } from './lakes.mjs?v=amphibious-1';
+import { waterWave } from './lakes.mjs?v=flight-1';
 
 export function createWater(scene) {
   const patches = new Map();
@@ -22,12 +22,16 @@ export function createWater(scene) {
       void main(){
         if(vDepth<.015||length(vLake)>1.02)discard;
         vec2 p=vWorld.xz;
-        float a=p.x*.11+p.y*.07+uTime*1.6,b=p.x*-.06+p.y*.14-uTime*1.2;
-        vec3 n=normalize(vec3(-.055*cos(a)+.03*cos(b),1.,-.035*cos(a)-.07*cos(b)));
+        // Three crossing wave trains break up regular stripes; they calm with
+        // distance so wide water reads as open sea from altitude, not corduroy.
+        float far=distance(cameraPosition,vWorld), calm=1.-smoothstep(90.,650.,far)*.8;
+        float a=p.x*.11+p.y*.07+uTime*1.6,b=p.x*-.06+p.y*.14-uTime*1.2,c=p.x*.23-p.y*.17+uTime*2.1,e=p.x*.031+p.y*.047-uTime*.6;
+        vec2 slope=vec2(-.045*cos(a)+.028*cos(b)-.018*cos(c)-.03*cos(e),-.03*cos(a)-.06*cos(b)+.014*cos(c)-.045*cos(e))*calm;
+        vec3 n=normalize(vec3(slope.x,1.,slope.y));
         vec3 view=normalize(cameraPosition-vWorld),light=normalize(vec3(-.55,.85,.35));
         float fresnel=pow(1.-max(dot(n,view),0.),3.);
         float glint=pow(max(dot(n,normalize(view+light)),0.),150.);
-        float ripple=sin(p.x*2.1+p.y*.7+uTime*1.7)*sin(p.y*1.6-uTime)*.013;
+        float ripple=sin(p.x*2.1+p.y*.7+uTime*1.7)*sin(p.y*1.6-uTime)*.013*calm;
         vec3 color=mix(uShallow,uDeep,smoothstep(.3,7.,vDepth));
         color=mix(color,uSky,fresnel*.58)+ripple+vec3(.8,.84,.7)*glint*.55;
         float edge=(1.-smoothstep(.15,.9,vDepth))*(.45+.3*sin(p.x*.7+p.y*.6-uTime*2.));

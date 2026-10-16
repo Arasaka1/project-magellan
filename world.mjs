@@ -1,6 +1,6 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes } from './lakes.mjs?v=amphibious-1';
-import { stepAmphibious } from './amphibious-motion.mjs?v=slider-1';
+import { createLakes, lakeRadius } from './lakes.mjs?v=flight-1';
+import { stepAmphibious } from './amphibious-motion.mjs?v=flight-1';
 import { controlAxis } from './controls.mjs?v=slider-1';
 import { stepFlight } from './flight-motion.mjs?v=flight-1';
 export const CHUNK = 96;
@@ -138,7 +138,7 @@ export function createWorld(seed) {
   function computeHeight(x, z) { return lakes.carve(x, z, baseHeight(x, z)); }
   function waterAt(x, z) {
     const lake = lakes.lakeAt(x, z);
-    if (!lake || Math.hypot((x - lake.x) / lake.rx, (z - lake.z) / lake.rz) > 1.02) return null;
+    if (!lake || lakeRadius(lake, x, z) > 1.02) return null;
     const depth = lake.level - surface(x, z);
     return depth > 0 ? { lake, level: lake.level, depth } : null;
   }
@@ -199,7 +199,7 @@ export function createWorld(seed) {
     }
     return list.filter(p => !brokenProps.has(p.id));
   }
-  return { seed, phase, height, surface, gradient, mountainAt, woodlandAt, desertAt, roadCenter, roadAt, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, starterLake: lakes.starter, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
+  return { seed, phase, height, surface, gradient, mountainAt, woodlandAt, desertAt, roadCenter, roadAt, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
 }
 
 export function featureLocal(feature, x, z) {
