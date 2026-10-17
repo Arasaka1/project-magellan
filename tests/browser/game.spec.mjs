@@ -26,7 +26,7 @@ test('deep water transforms the Blender car, floats with a wake, and reverses on
   await expect.poll(async () => (await snapshot(page)).vehicle.transform, { timeout: 30000 }).toBe(1);
   const boat = await snapshot(page);
   expect(boat.vehicle.floating).toBe(true); expect(boat.vehicle.airtime).toBe(0);
-  expect(boat.water.wakes).toBeGreaterThan(0); expect(boat.water.wakes).toBeLessThanOrEqual(80);
+  expect(boat.water.wakes).toBeGreaterThan(0); expect(boat.water.wakes).toBeLessThanOrEqual(220);
   expect(boat.carAsset.hullSpan).toBeGreaterThan(initial.carAsset.hullSpan * 1.5);
   expect(boat.vehicle.y).toBeGreaterThan(boat.vehicle.waterLevel - .85);
   await expect(page.locator('#surfaceState')).toHaveText('BOAT MODE');

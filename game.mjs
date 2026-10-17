@@ -1,5 +1,5 @@
 import { createTerrain } from './terrain.mjs?v=physics-9';
-import { createWater } from './water.mjs?v=physics-9';
+import { createWater } from './water.mjs?v=water-1';
 import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-9';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
@@ -109,7 +109,10 @@ $('game').append(renderer.domElement);
 const scene = new THREE.Scene();
 // Water fades with the same (altitude-dependent) fog distances as terrain.
 const fogUniforms = { uFogNear: { value: 350 }, uFogFar: { value: 1450 } }, streamCenterUniform = { value: new THREE.Vector2() };
-const waterSystem = createWater(scene, fogUniforms, streamCenterUniform);
+// The water reflects the same sky and sun the scene is lit by (see the sky
+// dome and sun below; the sun keeps a fixed offset from the car).
+const waterSystem = createWater(scene, fogUniforms, streamCenterUniform, { sunDirection: new THREE.Vector3(-65, 100, 45), sunColor: '#fff0d2', skyTop: '#729eaf', skyBottom: '#b9cdd0' });
+waterSystem.setDetail(qualityLevel > 0);
 const skyColor = new THREE.Color('#b9cdd0');
 scene.background = skyColor;
 // Fog is applied after tone mapping, the sky before it. This is the sky's
@@ -167,13 +170,13 @@ float ultraBlend(){return smoothstep(${ULTRA_BLEND_START.toFixed(1)},${ULTRA_BLE
 `;
 
 terrainMaterial.onBeforeCompile = shader => {
-  Object.assign(shader.uniforms, roadUniforms, streamUniforms);
-  shader.vertexShader = lodDeclaration + 'varying vec2 vGroundXZ;\n' + shader.vertexShader;
+  Object.assign(shader.uniforms, roadUniforms, streamUniforms, waterSystem.causticUniforms);
+  shader.vertexShader = lodDeclaration + 'varying vec2 vGroundXZ; varying vec3 vGroundWorld;\n' + shader.vertexShader;
   shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nobjectNormal=mix(objectNormal,coarseNormal,terrainBlend());');
   shader.vertexShader = shader.vertexShader.replace('#include <color_vertex>', '#include <color_vertex>\nvColor=mix(vColor,coarseColor,terrainBlend());');
-  shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y=mix(mix(position.y,coarseHeight,terrainBlend()),ultraHeight,ultraBlend());\nvGroundXZ=(modelMatrix*vec4(position,1.0)).xz;');
-  shader.fragmentShader = `varying vec2 vGroundXZ;
-    uniform float uRoadPhase;
+  shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y=mix(mix(position.y,coarseHeight,terrainBlend()),ultraHeight,ultraBlend());\nvGroundXZ=(modelMatrix*vec4(position,1.0)).xz;vGroundWorld=(modelMatrix*vec4(transformed,1.0)).xyz;');
+  shader.fragmentShader = `varying vec2 vGroundXZ; varying vec3 vGroundWorld;
+    uniform float uRoadPhase, uTime; uniform vec4 uCausticLake;
     float centerAt(float s,float band,float axis){
       float p=uRoadPhase+axis*1.8; float a=p+band*1.71;float b=p*.7+band*2.13;
       return band*420.0+35.0*(sin(s*.0028+a)-sin(a))+12.0*(sin(s*.0065+b)-sin(b));
@@ -196,6 +199,18 @@ terrainMaterial.onBeforeCompile = shader => {
     float along=dx<dz?p.y:p.x;
     float dash=(1.0-smoothstep(.065,.065+aa,d))*step(7.0,mod(along,14.0))*smoothstep(6.0,8.0,max(dx,dz));
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.77,.72,.56),max(edge*.7,dash*.88));
+    // Sunlight focused by the waves dances over the bed of the lake nearest
+    // the camera (xy centre, z reach, w surface level; reach 0 turns it off).
+    float underwater=uCausticLake.w-vGroundWorld.y;
+    if(uCausticLake.z>0.0&&underwater>.02&&distance(p,uCausticLake.xy)<uCausticLake.z){
+      float fade=(1.0-smoothstep(35.0,75.0,distance(cameraPosition,vGroundWorld)))*smoothstep(.02,.35,underwater)*exp(-underwater*.16);
+      if(fade>.0){
+        vec2 q=p*.62; float t=uTime*.9;
+        vec2 a=q+vec2(sin(q.y*1.3+t),cos(q.x*1.1-t*.8))*.9, b=q*1.37+vec2(cos(q.y*.9-t*.7),sin(q.x*1.5+t*.6))*.8;
+        float c=pow(1.0-abs(sin(a.x)*sin(a.y)),7.0)+pow(1.0-abs(sin(b.x+.7)*sin(b.y-.4)),7.0);
+        diffuseColor.rgb*=1.0+c*.42*fade;
+      }
+    }
   `);
 };
 let terrain = createTerrain(world);
@@ -719,6 +734,8 @@ function applyQuality(index) {
   // Distant tree stand-ins are skipped on Low.
   impostorsEnabled = index > 0;
   for (const tile of farTiles.values()) if (tile.userData.impostors) tile.userData.impostors.mesh.visible = impostorsEnabled;
+  // Low draws one wave layer with no reflected clouds, sparkle or caustics.
+  waterSystem.setDetail(index > 0);
   syncSettings();
 }
 const qualityNames = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High' };
