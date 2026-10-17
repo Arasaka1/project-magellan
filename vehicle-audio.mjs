@@ -163,6 +163,13 @@ export function createVehicleAudio(context, output, capacity = 10) {
   const lapTone = filter('lowpass', 380), lapGain = gainNode(0), lap = osc('sine', .31), lap2 = osc('sine', .53), lapDepth = gainNode(0);
   noise(.8).connect(lapTone).connect(lapGain).connect(output); lap.connect(lapDepth); lap2.connect(lapDepth); lapDepth.connect(lapGain.gain);
 
+  // Weather: a soft, dark rain wash (kept low and rolled off: bright hiss
+  // reads as static) and a low wind moan in snow.
+  const rainTone = filter('lowpass', 1400, .5), rainLow = filter('highpass', 250, .5), rainGain = gainNode(0), rainSwell = osc('sine', .21), rainDepth = gainNode(0);
+  noise(1.1).connect(rainLow).connect(rainTone).connect(rainGain).connect(output); rainSwell.connect(rainDepth).connect(rainGain.gain);
+  const snowTone = filter('lowpass', 320, .7), snowGain = gainNode(0), snowSwell = osc('sine', .13), snowDepth = gainNode(0);
+  noise(1.7).connect(snowTone).connect(snowGain).connect(output); snowSwell.connect(snowDepth).connect(snowGain.gain);
+
   // Transform motors: a servo whine while hulls or wings move.
   const motor = osc('triangle', 160), motorTone = filter('bandpass', 700, 2.5), motorGain = gainNode(0);
   motor.connect(motorTone).connect(motorGain).connect(output);
@@ -174,7 +181,9 @@ export function createVehicleAudio(context, output, capacity = 10) {
   }
   const voices = new Set();
   let played = 0;
+  const playedBy = {};
   function play(type, volume, pan = 0, rate = 1, send = .25) {
+    playedBy[type] = (playedBy[type] ?? 0) + 1;
     if (voices.size >= capacity) voices.values().next().value.stop();
     const source = context.createBufferSource(), gain = gainNode(volume), panner = context.createStereoPanner(), wet = gainNode(send);
     source.buffer = buffers.get(type); source.playbackRate.value = rate; panner.pan.value = clamp(pan, -1, 1);
@@ -230,6 +239,10 @@ export function createVehicleAudio(context, output, capacity = 10) {
     const lapping = s.floating ? .03 + smooth(0, 18, v) * .03 : s.waterDepth > .05 ? .02 : 0;
     set(lapGain.gain, lapping, .2); set(lapDepth.gain, lapping * .35, .2); set(lapTone.frequency, 320 + v * 25, .2);
 
+    const rainLevel = (s.rain ?? 0) * .022, snowLevel = (s.snow ?? 0) * .02;
+    set(rainGain.gain, rainLevel, .5); set(rainDepth.gain, rainLevel * .25, .5);
+    set(snowGain.gain, snowLevel, .6); set(snowDepth.gain, snowLevel * .5, .6);
+
     const moving = lastTransform === null || dt <= 0 ? 0 : (Math.abs(s.transform - lastTransform) + Math.abs(s.flight - lastFlight)) / dt;
     lastTransform = s.transform; lastFlight = s.flight;
     set(motorGain.gain, Math.min(1, moving * 2.2) * .04, .05); set(motor.frequency, 140 + (s.transform + s.flight) * 70 + moving * 40, .1);
@@ -243,7 +256,7 @@ export function createVehicleAudio(context, output, capacity = 10) {
   function clear() {
     for (const voice of [...voices]) voice.stop();
     burble = 0; held = 0; lastTransform = null; gear = 0; lastThump = 0;
-    for (const g of [engineGain, propGain, thrumGain, windGain, roadGain, dirtGain, squealGain, jetGain, lapGain, motorGain]) { g.gain.cancelScheduledValues(now()); g.gain.setValueAtTime(0, now()); }
+    for (const g of [engineGain, propGain, thrumGain, rainGain, snowGain, windGain, roadGain, dirtGain, squealGain, jetGain, lapGain, motorGain]) { g.gain.cancelScheduledValues(now()); g.gain.setValueAtTime(0, now()); }
   }
-  return { update, ...effects, clear, echo, get played() { return played; }, get active() { return voices.size; }, get gear() { return gear; } };
+  return { update, ...effects, clear, echo, get played() { return played; }, get playedBy() { return { ...playedBy }; }, get active() { return voices.size; }, get gear() { return gear; } };
 }

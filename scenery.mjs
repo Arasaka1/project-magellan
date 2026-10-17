@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { featurePoint } from './world.mjs?v=physics-11';
+import { featurePoint } from './world.mjs?v=physics-13';
 
 // Three.js BufferGeometry.clone() shares userData with its source. Detach it
 // before marking ownership, or the shared template becomes disposable too.

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waterWave, lakeExtent } from './lakes.mjs?v=physics-11';
+import { waterWave, lakeExtent } from './lakes.mjs?v=physics-13';
 
 // A small tileable wave texture, generated once (no download): R/G hold the
 // surface slope from a sum of periodic waves, B a soft noise used to break up
@@ -282,7 +282,14 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
     patches.clear(); wanted.clear(); ripples.length = 0; wakes.count = 0; emission = 0; lastY = null; airborne = 0; causticCheck = 0; wasWet = false; splashes.length = 0; caustic.value.set(0, 0, 0, 0);
     distant.geometry.dispose(); distant.geometry = new THREE.BufferGeometry(); distantRanges = []; distantIndex = null; distantCount = 0;
   }
+  // Weather: the reflected sky, the fade colour and the sun's glitter follow
+  // the overcast sky. Colours are copied, so callers can reuse theirs.
+  const baseSun = material.uniforms.uSunColor.value.clone();
+  function setSky(top, bottom, sun) {
+    const u = material.uniforms;
+    u.uSkyTop.value.copy(top); u.uSkyBottom.value.copy(bottom); u.uSky.value.copy(bottom); u.uSunColor.value.copy(baseSun).multiplyScalar(sun);
+  }
   const setDetail = on => { detail.value = on ? 1 : 0; causticCheck = 0; if (!on) caustic.value.z = 0; };
-  return { sync, install, update, clear, installDistant, setDetail, drainSplashes: () => splashes.splice(0), causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
+  return { sync, install, update, clear, installDistant, setDetail, setSky, drainSplashes: () => splashes.splice(0), causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
     get count() { return patches.size; }, get wakeCount() { return ripples.length; } };
 }

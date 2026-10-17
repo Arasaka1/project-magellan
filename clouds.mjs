@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { hash } from './world.mjs?v=physics-11';
+import { hash } from './world.mjs?v=physics-13';
 
 // Soft, seeded cloud banks at 230–350 m, high enough to fly through. One
 // instanced draw of camera-facing puffs; they fade near the camera (no hard
@@ -32,7 +32,7 @@ export function createClouds(scene, seed) {
   geometry.instanceCount = 0;
   const material = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, fog: true,
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { map: { value: null } }]),
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { map: { value: null }, uShade: { value: 0 } }]),
     vertexShader: `#include <common>
       #include <fog_pars_vertex>
       attribute vec3 offset; attribute float size; attribute float alpha;
@@ -47,11 +47,13 @@ export function createClouds(scene, seed) {
       }`,
     fragmentShader: `#include <common>
       #include <fog_pars_fragment>
-      uniform sampler2D map; varying vec2 vUv; varying float vAlpha;
+      uniform sampler2D map; uniform float uShade; varying vec2 vUv; varying float vAlpha;
       void main(){
         vec4 t = texture2D(map, vUv);
         if (t.a * vAlpha < .01) discard;
-        gl_FragColor = vec4(mix(vec3(.78,.83,.85), vec3(1.0), smoothstep(.2, .9, vUv.y)) * t.rgb, t.a * vAlpha);
+        // Rain clouds are darker and greyer underneath.
+        vec3 tone = mix(mix(vec3(.78,.83,.85), vec3(1.0), smoothstep(.2, .9, vUv.y)), mix(vec3(.5,.54,.57), vec3(.74,.77,.79), smoothstep(.2, .9, vUv.y)), uShade);
+        gl_FragColor = vec4(tone * t.rgb, t.a * vAlpha);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
         #include <fog_fragment>
@@ -87,6 +89,8 @@ export function createClouds(scene, seed) {
       if (cx !== cellX || cz !== cellZ) { cellX = cx; cellZ = cz; rebuild(camera); }
     },
     reset(nextSeed) { seed = nextSeed; cellX = cellZ = Infinity; },
+    // 0 fair-weather white, 1 grey rain cloud.
+    setShade(value) { material.uniforms.uShade.value = value; },
     get count() { return geometry.instanceCount; },
   };
 }

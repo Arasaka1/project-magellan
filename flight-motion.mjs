@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=physics-11';
+import { waterWave } from './lakes.mjs?v=physics-13';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -24,6 +24,9 @@ export const airDensity = y => 1 - .65 * smoothstep(450, 750, y) - .3 * smoothst
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 export const SAFE_ALTITUDE = 35; // hands-off climb-out height above the ground
+// For this long after leaving the ground or water, a tail or nose touching
+// down is part of the take-off, not a crash.
+export const TAKEOFF_GRACE = 3; // seconds
 const BOAT_TRANSFORM_SECONDS = 2.4;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -116,6 +119,7 @@ function startFlying(car, climb) {
   car.climb = angle; car.alpha = 0;
   car.sink = 0; car.coyote = 0; car.jumpBuffer = 0; car.airtime = 0; car.airDistance = 0; car.climbOut = false;
   car.flights++;
+  car.takeoff = TAKEOFF_GRACE;
 }
 
 function retractHulls(car, dt) {
@@ -141,7 +145,11 @@ function taxi(car, input, world, dt, groundAt) {
   car.x += car.vx * dt; car.z += car.vz * dt;
   const g = groundAt(world, car.x, car.z, car.heading);
   const level = water?.level ?? 0;
-  car.y = onWater ? Math.max(g.y, level - .52 + waterWave(car.x, car.z, car.time)) : g.y;
+  // On water the hull climbs onto the step as it nears lift-off speed, like a
+  // seaplane: riding at its normal depth, the nose-up rotation for take-off
+  // would dip the tail into the water and end the flight.
+  const planing = smoothstep(.55, 1, Math.abs(speed) / TAKEOFF_SPEED) * .62;
+  car.y = onWater ? Math.max(g.y, level - .52 + planing + waterWave(car.x, car.z, car.time)) : g.y;
   car.groundY = g.y; car.grounded = !onWater; car.floating = onWater; car.onRoad = false;
   car.waterDepth = water?.depth ?? 0; car.waterLevel = water?.level ?? null;
   car.pitch += ((onWater ? 0 : g.pitch) - car.pitch) * (1 - Math.exp(-10 * dt));
@@ -164,6 +172,8 @@ function rotateNose(car, angle) { setAttitude(car, qMul([car.qx, car.qy, car.qz,
 // (A take-off run never comes through here: taxiing has its own physics.)
 function touchdown(car, ground, water) {
   if (!car.flightMode) { land(car, ground, water); return; }
+  // Settling back while still trying to take off: keep the wings and taxi on.
+  if (car.takeoff > 0 && car.airspeed < TAKEOFF_SPEED) { backToTaxi(car, ground, water); return; }
   const descent = -car.vy;
   car.impact = Math.max(car.impact, clamp(descent * .02, .05, .3));
   if (car.airspeed >= TAKEOFF_SPEED) {
@@ -178,6 +188,16 @@ function touchdown(car, ground, water) {
     return;
   }
   land(car, ground, water);
+}
+
+// Back on the ground (or water) with the wings still out: the take-off run
+// carries on from here.
+function backToTaxi(car, ground, water) {
+  const floating = Boolean(water && water.depth > .55);
+  car.flying = false; car.y = floating ? Math.max(ground, water.level - .52) : ground; car.vy = 0;
+  car.grounded = !floating; car.floating = floating; car.climb = 0; car.sink = 0; car.takeoff = 0;
+  car.airtime = 0; car.airDistance = 0; car.rollVelocity = 0; car.climbOut = false;
+  setAttitude(car, attitudeFromEuler(car.heading, 0, 0));
 }
 
 function land(car, ground, water) {
@@ -268,6 +288,7 @@ function fly(car, input, world, dt, groundAt) {
   car.steer += (0 - car.steer) * (1 - Math.exp(-8 * dt)); car.time += dt;
   const travelled = Math.hypot(car.x - oldX, car.z - oldZ);
   car.distance += travelled; car.flightDistance += travelled; car.airtime += dt;
+  car.takeoff = Math.max(0, (car.takeoff || 0) - dt);
   retractHulls(car, dt);
   const water = world.waterAt?.(car.x, car.z), deep = water && water.depth > .9 ? water : null;
   const g = groundAt(world, car.x, car.z, car.heading);
@@ -306,9 +327,18 @@ export function wingClearance(car, world) {
 // lands with the normal car (or, in deep water, boat) physics. It is lifted
 // just clear first, so nothing is left buried in the terrain.
 function scrape(car, world) {
-  const { depth } = wingClearance(car, world);
+  const { depth, point } = wingClearance(car, world);
   if (!(depth > 0)) return;
   car.y += depth;
+  // During the take-off a tail (over-rotating) or nose touching the ground or
+  // water is shrugged off: lifted clear and nudged level, flying on, or back
+  // to the take-off run if it is too slow to fly. A wingtip still ends it.
+  if (car.takeoff > 0 && !point.side) {
+    car.vy = Math.max(car.vy, 0); car.impact = Math.max(car.impact, .08);
+    if (car.airspeed < TAKEOFF_SPEED) { backToTaxi(car, car.y, world.waterAt?.(car.x, car.z)); return; }
+    rotateNose(car, point.tail ? .04 : -.04);
+    return;
+  }
   car.flying = false; car.flightMode = false; car.grounded = false; car.floating = false;
   car.vx *= .9; car.vz *= .9; car.vy = Math.min(car.vy, 0);
   car.airtime = 0; car.airDistance = 0; car.rollVelocity = 0; car.landLock = 0; car.coyote = 0;

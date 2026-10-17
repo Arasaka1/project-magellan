@@ -1,24 +1,26 @@
-import { createTerrain } from './terrain.mjs?v=physics-11';
-import { createWater } from './water.mjs?v=sound-1';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-11';
+import { createTerrain } from './terrain.mjs?v=physics-13';
+import { createWater } from './water.mjs?v=weather-3';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-13';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=physics-11';
-import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-11';
+import { createDebris } from './debris.mjs?v=physics-13';
+import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-13';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
 import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=sound-2';
-import { createVehicleAudio } from './vehicle-audio.mjs?v=sound-2';
+import { createVehicleAudio } from './vehicle-audio.mjs?v=weather-2';
 import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
-import { createGrass } from './grass.mjs?v=physics-11';
+import { createGrass } from './grass.mjs?v=physics-13';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=shadow-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
-import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-11';
-import { createClouds } from './clouds.mjs?v=physics-11';
+import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-13';
+import { createClouds } from './clouds.mjs?v=weather-3';
+import { weatherAt } from './weather.mjs?v=weather-3';
+import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=snow-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-11';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-11';
+import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-13';
+import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-13';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -76,6 +78,10 @@ if (QUALITY_PRESETS.includes(qualityParam)) settings.quality = qualityParam;
 else if (testMode) settings.quality = coarse ? 'medium' : 'high';
 if (!QUALITY_PRESETS.includes(settings.quality)) settings.quality = 'auto';
 settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
+// Flight always starts on the full controls; T switches for this visit only
+// (an older build remembered simple controls).
+delete settings.simpleFlight;
+let simpleFlight = false;
 const saveSettings = () => { if (!testMode) try { localStorage.setItem('endless-drive-settings', JSON.stringify(settings)); } catch {} };
 const levels = qualityLevels(coarse);
 let auto = null, qualityLevel = 0;
@@ -122,7 +128,8 @@ scene.background = skyColor;
 const FOG_COLOR = new THREE.Color('#c8d1d3');
 scene.fog = new THREE.Fog(FOG_COLOR, 350, 1450);
 const camera = new THREE.PerspectiveCamera(57, innerWidth / innerHeight, .1, 6400);
-scene.add(new THREE.HemisphereLight('#e4efed', '#787257', 1.6));
+const hemisphere = new THREE.HemisphereLight('#e4efed', '#787257', 1.6);
+scene.add(hemisphere);
 const sun = new THREE.DirectionalLight('#fff0d2', 2.5);
 sun.castShadow = true;
 sun.shadow.mapSize.setScalar(levels[qualityLevel].shadow);
@@ -146,17 +153,18 @@ const sunDirection = new THREE.Vector3(-65, 100, 45).normalize();
 // A softly graded sky travels with the camera; the horizon never runs out.
 const sky = new THREE.Mesh(new THREE.SphereGeometry(6000, 24, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false,
-  uniforms: { top: { value: new THREE.Color('#729eaf') }, bottom: { value: skyColor } },
+  uniforms: { top: { value: new THREE.Color('#729eaf') }, bottom: { value: skyColor }, cover: { value: 0 }, cloudTone: { value: new THREE.Color('#dde5dd') } },
   vertexShader: 'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-  fragmentShader: `varying vec3 vDir; uniform vec3 top; uniform vec3 bottom;
+  fragmentShader: `varying vec3 vDir; uniform vec3 top; uniform vec3 bottom; uniform vec3 cloudTone; uniform float cover;
     float hashSky(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
     float noiseSky(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hashSky(i),hashSky(i+vec2(1,0)),f.x),mix(hashSky(i+vec2(0,1)),hashSky(i+vec2(1,1)),f.x),f.y);}
     void main(){
       vec3 ray=normalize(vDir);float t=pow(max(ray.y,0.0),.65);
       vec2 p=ray.xz/max(ray.y,.05)*1.3;
       float n=noiseSky(p)*.5+noiseSky(p*2.1)*.25+noiseSky(p*4.2)*.125;
-      float cloud=smoothstep(.48,.68,n)*smoothstep(.025,.14,ray.y)*(1.0-smoothstep(.7,.95,ray.y))*.62;
-      gl_FragColor=vec4(mix(mix(bottom,top,t),vec3(.87,.90,.87),cloud),1.0);
+      // Bad weather (cover) spreads the clouds into an overcast and greys them.
+      float cloud=smoothstep(.48-cover*.4,.68-cover*.3,n)*smoothstep(.025,.14,ray.y)*(1.0-smoothstep(.7,.95,ray.y)*(1.0-cover))*(.62+cover*.3);
+      gl_FragColor=vec4(mix(mix(bottom,top,t),cloudTone,cloud),1.0);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`,
@@ -166,6 +174,48 @@ sky.material.fragmentShader = sky.material.fragmentShader.replace(';#include', '
 scene.add(sky);
 // Cloud banks at flying height, seeded per world.
 const clouds = createClouds(scene, seed);
+
+// Weather: weather.mjs picks rain, snow or clear for the region under the car
+// (re-rolled every couple of minutes); here it eases in and out, greys the sky,
+// clouds and water, closes in the fog and dims the sun. ?weather=rain|snow|clear
+// forces one.
+const weatherFx = createWeatherEffects(scene);
+weatherFx.setDensity([.35, .6, .8, 1][qualityLevel]);
+const forcedWeather = ['clear', 'rain', 'snow'].includes(new URLSearchParams(location.search).get('weather')) ? new URLSearchParams(location.search).get('weather') : null;
+const SKY = {
+  clear: { top: new THREE.Color('#729eaf'), bottom: new THREE.Color('#b9cdd0'), cloud: new THREE.Color('#dde5dd') },
+  rain: { top: new THREE.Color('#7b858a'), bottom: new THREE.Color('#a3abad'), cloud: new THREE.Color('#8a9296') },
+  snow: { top: new THREE.Color('#a4aeb3'), bottom: new THREE.Color('#c9cfd1'), cloud: new THREE.Color('#d2d7d9') },
+};
+const weather = { clock: 0, check: 0, target: { kind: 'clear', strength: 0, region: 'meadow' }, rain: 0, snow: 0, gust: new THREE.Vector3(), lastCamera: new THREE.Vector3(), cameraVelocity: new THREE.Vector3() };
+const weatherColor = new THREE.Color(), skyTop = new THREE.Color();
+function updateWeather(dt) {
+  const step = running ? dt : 0;
+  weather.clock += step;
+  if ((weather.check -= step) <= 0 || !started) { weather.check = .5; weather.target = weatherAt(world, vehicle.x, vehicle.z, weather.clock, forcedWeather); }
+  // Showers build and clear over about ten seconds (at once when forced or before the start).
+  const ease = !started || forcedWeather ? 1 : 1 - Math.exp(-step / 4);
+  const { kind, strength } = weather.target;
+  weather.rain += ((kind === 'rain' ? strength : 0) - weather.rain) * ease;
+  weather.snow += ((kind === 'snow' ? strength : 0) - weather.snow) * ease;
+  const rain = smoothstep(0, .6, weather.rain), snow = smoothstep(0, .6, weather.snow), cover = Math.max(rain, snow);
+  // Sky, clouds and fog: blend toward the overcast of whichever is falling.
+  const grey = rain >= snow ? SKY.rain : SKY.snow;
+  skyColor.copy(SKY.clear.bottom).lerp(grey.bottom, cover);
+  skyTop.copy(SKY.clear.top).lerp(grey.top, cover); sky.material.uniforms.top.value.copy(skyTop);
+  sky.material.uniforms.cloudTone.value.copy(SKY.clear.cloud).lerp(grey.cloud, cover); sky.material.uniforms.cover.value = cover;
+  scene.fog.color.copy(toneMappedHorizon(skyColor, renderer.toneMappingExposure, weatherColor));
+  clouds.setShade(rain);
+  sun.intensity = 2.5 * (1 - .72 * cover); hemisphere.intensity = 1.6 * (1 + .12 * cover);
+  waterSystem.setSky(skyTop, skyColor, 1 - .85 * cover);
+  // Rain and snow drift with a little wind, relative to the moving camera.
+  if (step > 0) weather.cameraVelocity.subVectors(camera.position, weather.lastCamera).divideScalar(step);
+  if (weather.cameraVelocity.length() > 400) weather.cameraVelocity.set(0, 0, 0); // a teleport, not motion
+  weather.lastCamera.copy(camera.position);
+  weather.gust.set(Math.sin(weather.clock * .13) * 1.5 + 1.2, 0, Math.cos(weather.clock * .09) * 1.2 + .6).multiplyScalar(1 + snow);
+  weatherFx.update({ rainAmount: rain, snowAmount: snow, cameraVelocity: weather.cameraVelocity, gust: weather.gust, pixels: renderer.domElement.height, fov: camera.fov }, step);
+  return cover;
+}
 
 // Paint roads directly onto the terrain surface. Geometry, collision height and
 // asphalt now share one surface: no raised ribbons, cuttings, seams or walls.
@@ -555,7 +605,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=physics-11', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=physics-13', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -604,7 +654,7 @@ function panAt(x, z) {
   const dx = x - camera.position.x, dz = z - camera.position.z;
   return Math.max(-1, Math.min(1, (dx * cameraRight.x + dz * cameraRight.z) / Math.max(4, Math.hypot(dx, dz)))) * .8;
 }
-const heard = { impact: 0, wingStrikes: 0, wingCrashes: 0, surface: 'road', surfaceCheck: 0, flightThump: -1 };
+const heard = { impact: 0, wingStrikes: 0, wingCrashes: 0, landings: vehicle.landings, surface: 'road', surfaceCheck: 0, contact: -10 };
 function updateSound(throttle, splashes, dt) {
   const v = vehicle;
   if ((heard.surfaceCheck -= dt) <= 0) {
@@ -612,17 +662,22 @@ function updateSound(throttle, splashes, dt) {
     heard.surface = v.onRoad ? 'road' : world.desertAt(v.x, v.z) || world.waterAt(v.x, v.z) || world.lakesNear(v.x, v.z, 0).length ? 'sand' : 'dirt';
   }
   const slip = Math.abs(v.vx * Math.cos(v.heading) - v.vz * Math.sin(v.heading));
-  audio.vehicle.update({ speed: v.speed, throttle, grounded: v.grounded, floating: v.floating, flying: v.flying, airspeed: v.airspeed, transform: v.transform, flight: v.flight, slip, surface: heard.surface, waterDepth: v.waterDepth }, dt);
+  audio.vehicle.update({ speed: v.speed, throttle, grounded: v.grounded, floating: v.floating, flying: v.flying, airspeed: v.airspeed, transform: v.transform, flight: v.flight, slip, surface: heard.surface, waterDepth: v.waterDepth, rain: weather.rain, snow: weather.snow }, dt);
   // Events: a fresh rise in impact is a landing, bounce or knock; splashes come
   // from the water; the flight model counts wing strikes and scrapes.
   const decayed = heard.impact * Math.exp(-8 * dt);
-  // Skimming the ground in flight hops many times a second; only a real bounce
-  // (not every graze) thumps, and at most every 0.8 s.
-  const t = audio.context.currentTime;
-  if (v.impact > decayed + .03 && !v.floating && !splashes.length && (!v.flightMode || (v.impact > .1 && t - heard.flightThump > .8))) {
-    audio.vehicle.thump(v.impact); if (v.flightMode) heard.flightThump = t;
+  // A thump needs a quiet gap since the last contact. Skimming the ground in
+  // flight, or a fast car hopping over rough ground, touches many times a
+  // second: each touch restarts the gap, so a run of contacts thumps once, on
+  // the first, and again only after a real time in the air. A car landing
+  // also needs a real jump (or a hard hit) behind it.
+  const t = audio.context.currentTime, landed = v.landings !== heard.landings;
+  if (v.impact > decayed + .03 && !v.floating && !splashes.length) {
+    const quiet = t - heard.contact; heard.contact = t;
+    const worth = v.flightMode ? v.impact > .1 && quiet > 1.2 : landed ? (v.airtime > .3 || v.impact > .15) && quiet > .5 : v.impact > .1 && quiet > .5;
+    if (worth) audio.vehicle.thump(v.impact);
   }
-  heard.impact = v.impact;
+  heard.impact = v.impact; heard.landings = v.landings;
   for (const splash of splashes) audio.vehicle.splash(splash.power, panAt(splash.x, splash.z));
   if ((v.wingStrikes || 0) > heard.wingStrikes && v.lastStrike) audio.vehicle.strike(v.lastStrike.heavy, panAt(v.lastStrike.x, v.lastStrike.z));
   if ((v.wingCrashes || 0) > heard.wingCrashes) audio.vehicle.scrape(.8);
@@ -658,7 +713,7 @@ function syncInput() {
   for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k);
   const touches = [...touchStates.values()];
   for (const [axis, codes] of Object.entries(flightKeys)) input[axis] = codes.some(code => keyStates.has(code)) || touches.includes(flightTouch[axis]);
-  input.simpleFlight = Boolean(settings.simpleFlight);
+  input.simpleFlight = simpleFlight;
   // Analog axes add to the digital keys; physics clamps the combined value.
   input.steer = slider.pointer === null ? undefined : steerAxis(slider.value, settings.sensitivity);
 }
@@ -702,7 +757,7 @@ function newWorld() {
   debris.clear(); treeBreakage?.clear(); audio?.breaks.clear(); audio?.vehicle.clear();
   const url = new URL(location.href); url.searchParams.set('seed', seed); history.replaceState(null, '', url);
   beginWorldLoad(continueDriving); resetCamera(); syncSeed(); updateHUD(); drawMap();
-  reportedLanding = 0; reportedBoat = false; reportedFlying = false; clouds.reset(seed); $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
+  reportedLanding = 0; reportedBoat = false; reportedFlying = false; clouds.reset(seed); weather.clock = 0; weather.check = 0; weather.rain = weather.snow = 0; $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
 }
 function syncSeed() { $('seedTxt').textContent = String(seed).padStart(6, '0'); }
 $('startBtn').onclick = resume; $('pauseBtn').onclick = pause; $('newWorld').onclick = newWorld;
@@ -717,10 +772,10 @@ function toggleFly() {
 }
 $('flyBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (running) toggleFly(); });
 // T switches between full three-axis flight and the simple arcade controls
-// (bank to turn, climb/dive, levels itself when released). Remembered.
+// (bank to turn, climb/dive, levels itself when released) for this visit.
 function toggleFlightControls() {
-  settings.simpleFlight = !settings.simpleFlight; saveSettings(); syncInput();
-  toast(settings.simpleFlight ? coarse ? 'Simple flight · slider turns · CLIMB / DIVE · ↑↓ throttle' : 'Simple flight · A/D turn · Space/Shift climb and dive · W/S throttle'
+  simpleFlight = !simpleFlight; syncInput();
+  toast(simpleFlight ? coarse ? 'Simple flight · slider turns · CLIMB / DIVE · ↑↓ throttle' : 'Simple flight · A/D turn · Space/Shift climb and dive · W/S throttle'
     : coarse ? 'Full flight · slider rolls · CLIMB / DIVE pitch · ↑↓ throttle' : 'Full flight · ↑/↓ pitch · A/D roll · Q/E yaw · W/S throttle');
   updateHUD();
 }
@@ -790,6 +845,7 @@ function applyQuality(index) {
   grass.setQuality(level.grass);
   // Distant tree stand-ins are skipped on Low.
   impostorsEnabled = index > 0;
+  weatherFx.setDensity([.35, .6, .8, 1][index]);
   for (const tile of farTiles.values()) if (tile.userData.impostors) tile.userData.impostors.mesh.visible = impostorsEnabled;
   // Low draws one wave layer with no reflected clouds, sparkle or caustics.
   waterSystem.setDetail(index > 0);
@@ -895,7 +951,7 @@ function updateHUD() {
   touchBrake.setAttribute('aria-label', planeMode ? 'Dive' : vehicle.floating ? 'Slow boat' : 'Drift');
   document.body.classList.toggle('plane-mode', planeMode);
   $('flyBtn').textContent = planeMode ? 'LAND' : 'FLY'; $('flyBtn').setAttribute('aria-label', planeMode ? 'Land' : 'Fly');
-  const simple = Boolean(settings.simpleFlight);
+  const simple = simpleFlight;
   $('simpleBtn').classList.toggle('active', simple); $('simpleBtn').setAttribute('aria-pressed', String(simple));
   $('flightHint').classList.toggle('simple', simple);
   const altitude = vehicle.y - world.surface(vehicle.x, vehicle.z);
@@ -917,6 +973,7 @@ function updateHUD() {
   const headings = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'];
   $('headingTxt').textContent = headings[((Math.round(vehicle.heading / (Math.PI / 4)) % 8) + 8) % 8];
   $('biomeTxt').textContent = vehicle.waterDepth > 0 ? world.waterAt(vehicle.x, vehicle.z)?.lake.name ?? 'THE LAKES' : world.desertAt(vehicle.x, vehicle.z) > .55 ? 'THE SANDLANDS' : world.mountainAt(vehicle.x, vehicle.z) > .62 ? 'THE HIGHLANDS' : world.woodlandAt(vehicle.x, vehicle.z) > .58 ? 'PINE COUNTRY' : 'OPEN MEADOW';
+  if (weather.rain > .3 || weather.snow > .3) $('biomeTxt').textContent += weather.snow > weather.rain ? ' · SNOW' : ' · RAIN';
   $('coordinates').textContent = `${Math.round(Math.abs(vehicle.x))} ${vehicle.x < 0 ? 'E' : 'W'} · ${Math.round(Math.abs(vehicle.z))} ${vehicle.z >= 0 ? 'N' : 'S'}`;
   $('elevation').textContent = Math.round(flying ? vehicle.y : vehicle.floating ? vehicle.waterLevel : world.surface(vehicle.x, vehicle.z)) + ' M';
   profiler.record('hud', performance.now() - hudStarted);
@@ -988,8 +1045,10 @@ function render(dt) {
   // From the air, see further: fog recedes onto the horizon terrain tier as
   // the camera climbs, and the near plane moves out to keep depth precision.
   const aloft = smoothstep(40, 320, camera.position.y - world.surface(camera.position.x, camera.position.z));
-  scene.fog.near = fogUniforms.uFogNear.value = 350 + aloft * 900;
-  scene.fog.far = fogUniforms.uFogFar.value = 1450 + aloft * 2900;
+  // Rain and snow close the fog in.
+  const cover = updateWeather(dt), murk = 1 - .5 * cover;
+  scene.fog.near = fogUniforms.uFogNear.value = (350 + aloft * 900) * murk;
+  scene.fog.far = fogUniforms.uFogFar.value = (1450 + aloft * 2900) * (1 - .35 * cover);
   const near = cameraMode === 2 && running ? .1 : .1 + aloft * 1.4;
   if (Math.abs(camera.near - near) > .02) { camera.near = near; camera.updateProjectionMatrix(); }
   // The 96 m shadow map sits 18 m ahead of the car along the view, where the
@@ -1084,5 +1143,5 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
   const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.mesh.count ?? 0), 0);
-  return { horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: Boolean(settings.simpleFlight), airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  return { weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };

@@ -217,6 +217,44 @@ test('touching down on deep water lands as a boat, and a boat can take off again
   let lifted = false;
   run(car, { up: true }, 12, c => { if (c.flying) lifted = true; });
   assert.ok(lifted); assert.ok(car.transform < .2);
+  // It keeps flying: the tail clears the water as the nose comes up.
+  assert.equal(car.wingCrashes ?? 0, 0); assert.equal(car.flying, true); assert.ok(altitude(car) > 5);
+});
+
+test('a boat afloat on a lake unfolds its wings, planes up and takes off without the tail touching the water', () => {
+  const lake = world.starterLake, car = createVehicle(world, lake.x, lake.z, 0);
+  assert.equal(car.floating, true);
+  toggleFlight(car);
+  let lifted = false;
+  run(car, { up: true }, 9, c => { if (c.flying) lifted = true; });
+  assert.ok(lifted, 'lifted off');
+  assert.equal(car.wingCrashes ?? 0, 0); assert.equal(car.flying, true); assert.equal(car.flightMode, true);
+  assert.ok(car.y - lake.level > 5, `climbing: ${car.y - lake.level}`);
+});
+
+test('a tail or nose touching down during the take-off does not end the flight', () => {
+  const lake = world.starterLake;
+  for (const [name, make, input] of [
+    ['water, nose held up', () => createVehicle(world, lake.x, lake.z, 0), { throttleUp: true, pitchUp: true }],
+    ['water, simple climb', () => createVehicle(world, lake.x, lake.z, 0), { simpleFlight: true, up: true, jump: true }],
+    ['land, simple climb from a jump', () => createVehicle(world), { simpleFlight: true, up: true, jump: true }],
+  ]) {
+    const car = make(); toggleFlight(car);
+    run(car, input, 12);
+    assert.equal(car.wingCrashes ?? 0, 0, name); assert.equal(car.flying, true, name); assert.equal(car.flightMode, true, name);
+  }
+});
+
+test('settling back below lift-off speed while taking off keeps the wings and taxis on', () => {
+  const car = createVehicle(world); car.vx = 0; car.vz = 15; car.speed = 15;
+  car.grounded = false; car.vy = 5; car.y += 2;
+  toggleFlight(car); car.flight = .5;
+  let glided = false;
+  run(car, {}, 3, c => { if (c.flying) glided = true; });
+  assert.ok(glided);
+  assert.equal(car.flying, false); assert.equal(car.flightMode, true); assert.equal(car.wingCrashes ?? 0, 0);
+  run(car, { throttleUp: true }, 6);
+  assert.equal(car.flying, true, 'and it can still take off');
 });
 
 test('a jumping car with its wings half out starts to glide', () => {
