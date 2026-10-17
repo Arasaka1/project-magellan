@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=physics-15';
+import { waterWave } from './lakes.mjs?v=physics-16';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -30,7 +30,7 @@ export const TAKEOFF_GRACE = 3; // seconds
 const BOAT_TRANSFORM_SECONDS = 2.4;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-export const PITCH_RATE = 1.1, ROLL_RATE = 2.2, YAW_RATE = .6; // rad/s at full authority
+export const PITCH_RATE = 1.1, ROLL_RATE = 2.2, YAW_RATE = .35; // rad/s at full authority
 
 // F toggles the request; the transformation and lift follow in fixed steps.
 export function toggleFlight(car) { car.flightMode = !car.flightMode; return car.flightMode; }
@@ -263,6 +263,16 @@ function fly(car, input, world, dt, groundAt) {
     } else car.climbOut = false;
   }
   q = qMul(q, qAxis(-pitchRate * authority * dt, yawRate * authority * dt, rollRate * authority * dt));
+  // Rudder: the nose yaws about the plane's own up axis, and on the full
+  // controls the flight path swings round with it (a flat, skidding turn that
+  // bleeds a little speed). Left to the aerodynamics alone, the tail would
+  // weathervane the nose straight back and the plane would only crab.
+  if (yawRate && !simple) {
+    const swing = yawRate * authority * dt, [mx, my, mz] = mast, c = Math.cos(swing), sn = Math.sin(swing), along = v[0] * mx + v[1] * my + v[2] * mz;
+    const [vx, vy, vz] = v, cx = my * vz - mz * vy, cy = mz * vx - mx * vz, cz = mx * vy - my * vx;
+    v[0] = vx * c + cx * sn + mx * along * (1 - c); v[1] = vy * c + cy * sn + my * along * (1 - c); v[2] = vz * c + cz * sn + mz * along * (1 - c);
+    const bleed = 1 - .12 * Math.abs(yaw) * dt; for (let k = 0; k < 3; k++) v[k] *= bleed;
+  }
   // Stability and trim: the tail swings the nose back toward the angle of
   // attack at which lift balances weight on the current flight path (and,
   // upright, in the current bank). Hands off, the plane holds its path; slow,

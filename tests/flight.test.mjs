@@ -416,3 +416,15 @@ test('a gentle touchdown at speed with the nose pushed down rolls on with the wi
   run(car, { throttleUp: true, pitchDown: true }, 1);
   assert.equal(car.flying, false); assert.equal(car.flightMode, true); assert.equal(car.wingCrashes ?? 0, 0);
 });
+
+test('Q and E yaw the plane: the flight path turns with the nose, both ways, without banking', () => {
+  for (const [key, sign] of [['yawLeft', 1], ['yawRight', -1]]) {
+    const car = high(airborne(), 80); car.climbOut = false;
+    const path = Math.atan2(car.vx, car.vz), y = car.y;
+    run(car, { throttleUp: true, [key]: true }, 2);
+    const turned = (Math.atan2(car.vx, car.vz) - path) * sign;
+    assert.ok(turned > .5, `${key} turned the flight path ${turned} rad`);
+    assert.ok(Math.abs(car.heading - Math.atan2(car.vx, car.vz)) < .1, 'nose and path agree: no crabbing');
+    assert.ok(Math.abs(bankOf(car)) < .05); assert.ok(Math.abs(car.y - y) < 20); assert.equal(car.flying, true);
+  }
+});

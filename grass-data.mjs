@@ -1,4 +1,4 @@
-import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=physics-15';
+import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=physics-16';
 
 // 1.2 m cells; noise clumps decide which are filled, so meadows get thick
 // patches with gaps between them rather than an even sprinkle.

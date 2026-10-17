@@ -1,4 +1,4 @@
-import { waterWave } from './lakes.mjs?v=physics-15';
+import { waterWave } from './lakes.mjs?v=physics-16';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const TRANSFORM_SECONDS = 2.4;
 export const BOAT_ENTER_DEPTH = .9;
