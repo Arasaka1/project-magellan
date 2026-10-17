@@ -96,7 +96,7 @@ test('worker loading, actual WebGL rendering, and stationary scenery stay stable
   const errors = await openGame(page, 3);
   const state = await snapshot(page);
   expect(state.grass.tufts).toBeGreaterThan(0); expect(state.grass.meshes).toBeLessThanOrEqual(9);
-  expect(state.grass.tufts * 3).toBeLessThanOrEqual(43200);
+  expect(state.grass.triangles).toBeLessThanOrEqual(175000); // High: 15-triangle tufts within 78 m
   expect(state.loading).toBe(false); expect(state.carDraws).toBeLessThanOrEqual(72); expect(state.farTiles).toBe(81);
   expect(state.natureAsset.ready).toBe(true); expect(state.natureAsset.error).toBeNull();
   expect(state.natureAsset.assets).toHaveLength(8);
@@ -260,11 +260,11 @@ test('graphics presets cycle, and the steering slider replaces the arrow buttons
   const errors = await openGame(page, 3);
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Medium');
   let state = await snapshot(page);
-  expect(state.quality).toMatchObject({ preset: 'medium', pixelRatio: 1.35, shadow: 1024, grassDensity: .5 });
+  expect(state.quality).toMatchObject({ preset: 'medium', pixelRatio: 1.35, shadow: 1024, grassDensity: .2 });
   // Medium plains grass stays within its smaller range and draw budget.
   expect(state.grass.range).toBe(48); expect(state.grass.meshes).toBeGreaterThan(0);
   expect(state.grass.meshes).toBeLessThanOrEqual(4); expect(state.grass.tufts).toBeGreaterThan(0);
-  expect(state.grass.tufts * 3).toBeLessThanOrEqual(9600);
+  expect(state.grass.triangles).toBeLessThanOrEqual(12000); // Medium: cheap 5-triangle tufts, near the old 9,600 cap
   await testInfo.attach('mobile-grass', { body: await page.screenshot(), contentType: 'image/png' });
   await page.locator('#qualityBtn').tap();
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: High');

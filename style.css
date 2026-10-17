@@ -1024,3 +1024,14 @@ body.plane-mode #touch .touch-center .fly-button { grid-column:auto; }
 @media(max-width:1100px) { #flightHint { gap:11px; font-size:9px; left:calc(50% - 40px); } #flightHint kbd { margin-right:4px; } }
 #flightHint .simple-only, #flightHint.simple .full-only { display:none; }
 #flightHint.simple .simple-only { display:inline; }
+
+/* Settings → FPS meter: a debug overlay under the logo. */
+#perfMeter {
+  position:fixed; top:78px; left:44px; z-index:6; pointer-events:none;
+  padding:7px 9px 8px; border-radius:9px; background:rgba(14,22,18,.62); border:1px solid rgba(246,227,183,.14);
+  color:var(--cream); font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.02em;
+}
+#perfMeter[hidden] { display:none; }
+#perfMeter pre { margin:0 0 6px; font:inherit; white-space:pre; }
+#perfMeter canvas { display:block; width:160px; height:37px; border-radius:4px; }
+@media(max-width:700px) { #perfMeter { top:182px; left:12px; font-size:9px; } #perfMeter canvas { width:130px; height:30px; } } /* below the centred direction pills */

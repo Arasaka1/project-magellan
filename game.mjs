@@ -11,8 +11,9 @@ import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=sound-2';
 import { createVehicleAudio } from './vehicle-audio.mjs?v=weather-2';
 import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
-import { createGrass } from './grass.mjs?v=physics-15';
-import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=fixes-1';
+import { createGrass } from './grass.mjs?v=grass-6';
+import { createPerfMeter } from './perf-meter.mjs?v=perf-1';
+import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=grass-6';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
 import { toggleFlight, flightAxes, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-15';
 import { createClouds } from './clouds.mjs?v=weather-5';
@@ -82,6 +83,9 @@ settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
 // (an older build remembered simple controls).
 delete settings.simpleFlight;
 let simpleFlight = false;
+// Settings → FPS meter: a frame-rate and frame-time overlay for debugging.
+const perfMeter = createPerfMeter(document.body);
+perfMeter.setVisible(Boolean(settings.perfMeter));
 const saveSettings = () => { if (!testMode) try { localStorage.setItem('endless-drive-settings', JSON.stringify(settings)); } catch {} };
 const levels = qualityLevels(coarse);
 let auto = null, qualityLevel = 0;
@@ -150,6 +154,15 @@ function setFarShadow(size) {
 setFarShadow(levels[qualityLevel].farShadow);
 scene.add(farSun, farSun.target); // after the sun: it must be the second directional shadow
 const sunDirection = new THREE.Vector3(-65, 100, 45).normalize();
+// Shadow maps move only in whole texels across the light's view, so the
+// shadow pattern never slides under the scene and edges don't crawl as the car
+// moves. The basis is the shadow camera's own (lookAt with +y up).
+const lightRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), sunDirection).normalize();
+const lightUp = new THREE.Vector3().crossVectors(sunDirection, lightRight);
+function snapToTexels(target, span, size) {
+  const texel = span / size, x = target.dot(lightRight), y = target.dot(lightUp);
+  target.addScaledVector(lightRight, Math.round(x / texel) * texel - x).addScaledVector(lightUp, Math.round(y / texel) * texel - y);
+}
 // A softly graded sky travels with the camera; the horizon never runs out.
 const sky = new THREE.Mesh(new THREE.SphereGeometry(6000, 24, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false,
@@ -250,6 +263,7 @@ terrainMaterial.onBeforeCompile = shader => {
       return band*420.0+35.0*(sin(s*.0028+a)-sin(a))+12.0*(sin(s*.0065+b)-sin(b));
     }
     float grain(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
+    float smoothGrain(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(grain(i),grain(i+vec2(1,0)),f.x),mix(grain(i+vec2(0,1)),grain(i+vec2(1,1)),f.x),f.y);}
   ` + shader.fragmentShader;
   shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
     vec2 p=vGroundXZ; float dx=10000.0;float dz=10000.0;
@@ -267,6 +281,17 @@ terrainMaterial.onBeforeCompile = shader => {
     float along=dx<dz?p.y:p.x;
     float dash=(1.0-smoothstep(.065,.065+aa,d))*step(7.0,mod(along,14.0))*smoothstep(6.0,8.0,max(dx,dz));
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.77,.72,.56),max(edge*.7,dash*.88));
+    // Meadow ground (green, off the road): fine grass speckle that fades out
+    // before it could shimmer, and broad lush and dry blotches at any range,
+    // so the land past the grass tufts doesn't read as a flat carpet.
+    float meadow=smoothstep(.015,.07,diffuseColor.g-max(diffuseColor.r,diffuseColor.b)*.9)*(1.0-shoulder);
+    if(meadow>0.0){
+      float seen=distance(cameraPosition,vGroundWorld);
+      float fine=smoothGrain(p*1.8)*.6+smoothGrain(p*4.1+7.0)*.4;
+      float blotch=smoothGrain(p*.055)*.65+smoothGrain(p*.13+3.0)*.35;
+      diffuseColor.rgb*=1.0+meadow*((fine-.5)*.2*(1.0-smoothstep(35.0,140.0,seen))+(blotch-.5)*.16);
+      diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(1.1,1.05,.82),meadow*smoothstep(.58,.8,blotch)*.55);
+    }
     // Sunlight focused by the waves dances over the bed of the lake nearest
     // the camera (xy centre, z reach, w surface level; reach 0 turns it off).
     float underwater=uCausticLake.w-vGroundWorld.y;
@@ -608,7 +633,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=physics-15', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=grass-3', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -860,11 +885,16 @@ function syncSettings() {
   $('qualityBtn').textContent = `Graphics: ${qualityNames[settings.quality]}${auto ? ` · ${level === 'medium+' ? 'Medium+' : qualityNames[level]}` : ''}`;
   $('sensitivity').value = Math.round(settings.sensitivity * 100);
   $('sensitivityValue').textContent = `${Math.round(settings.sensitivity * 100)}%`;
+  $('perfBtn').textContent = `FPS meter: ${settings.perfMeter ? 'On' : 'Off'}`; $('perfBtn').setAttribute('aria-pressed', String(Boolean(settings.perfMeter)));
 }
 $('qualityBtn').onclick = () => {
   settings.quality = QUALITY_PRESETS[(QUALITY_PRESETS.indexOf(settings.quality) + 1) % QUALITY_PRESETS.length];
   applyQuality(startQuality()); saveSettings();
   toast(settings.quality === 'auto' ? 'Auto graphics adjust to your device' : `${qualityNames[settings.quality]} graphics`);
+};
+$('perfBtn').onclick = () => {
+  settings.perfMeter = !settings.perfMeter; perfMeter.setVisible(settings.perfMeter); saveSettings(); syncSettings();
+  toast(settings.perfMeter ? 'FPS meter on' : 'FPS meter off');
 };
 $('sensitivity').oninput = e => { settings.sensitivity = clamp(Number(e.target.value) / 100, .5, 1.5); saveSettings(); syncSettings(); };
 
@@ -1016,6 +1046,10 @@ function render(dt) {
   const pose = vehiclePresentation.sample(running ? accumulator / FIXED_DT : 1);
   streamUniforms.uStreamCenter.value.set(pose.x, pose.z);
   for (const chunk of chunks.values()) grass.update(chunk.grassMesh, chunk.cx, chunk.cz, pose.x, pose.z);
+  // Grass sways with the weather's wind (harder in a storm) and parts for the car.
+  const breeze = Math.hypot(weather.gust.x, weather.gust.z) || 1, storm = 1 + .7 * Math.max(weather.rain, weather.snow);
+  // The simulation clock, so pausing freezes the grass like everything else.
+  grass.animate(pose.time, pose.x, pose.y, pose.z, weather.gust.x / breeze * storm, weather.gust.z / breeze * storm, Math.abs(pose.speed));
   if (pose.useAttitude) car.quaternion.set(pose.qx, pose.qy, pose.qz, pose.qw);
   else car.rotation.set(pose.pitch, pose.heading, pose.roll, 'YXZ');
   rollPivot.set(0, 1, 0).applyQuaternion(car.quaternion);
@@ -1065,11 +1099,13 @@ function render(dt) {
   camera.getWorldDirection(shadowAhead).setY(0);
   if (shadowAhead.lengthSq() < 1e-4) shadowAhead.set(Math.sin(pose.heading), 0, Math.cos(pose.heading));
   shadowAhead.normalize().multiplyScalar(18).add(car.position);
-  sun.position.set(shadowAhead.x - 65, pose.y + 100, shadowAhead.z + 45); sun.target.position.copy(shadowAhead); sun.target.updateMatrixWorld();
+  snapToTexels(shadowAhead, 96, sun.shadow.mapSize.x);
+  sun.target.position.copy(shadowAhead); sun.position.copy(shadowAhead).addScaledVector(sunDirection, 127.5); sun.target.updateMatrixWorld();
   if (farSun.castShadow) {
     camera.getWorldDirection(farAhead).setY(0);
     if (farAhead.lengthSq() < 1e-4) farAhead.set(Math.sin(pose.heading), 0, Math.cos(pose.heading));
     farAhead.normalize().multiplyScalar(FAR_SHADOW_AHEAD).add(car.position);
+    snapToTexels(farAhead, FAR_SHADOW * 2, farSun.shadow.mapSize.x);
     farSun.target.position.copy(farAhead); farSun.position.copy(farAhead).addScaledVector(sunDirection, 320); farSun.target.updateMatrixWorld();
   }
   profiler.measure('waterUpdate', () => waterSystem.update(world, pose, dt));
@@ -1126,7 +1162,9 @@ function frame(now) {
     if (mapTime > (coarse ? .6 : .3)) { mapTime = 0; drawMap(); }
   }
   render(running ? dt : 0);
-  if (running) profiler.record('frameCPU', performance.now() - frameStarted);
+  const frameCPU = performance.now() - frameStarted;
+  if (running) profiler.record('frameCPU', frameCPU);
+  if (perfMeter.visible) perfMeter.frame(frameCPU, now, { draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, level: qualityNames[levels[qualityLevel].name] ?? 'Medium+', pixelRatio: renderer.getPixelRatio(), paused: !running });
 }
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
@@ -1141,7 +1179,8 @@ requestAnimationFrame(frame);
 profiler.record('initialLoad', performance.now() - bootStarted);
 if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snapshot: () => {
   const visibleGrass = [...chunks.values()].filter(c => c.group.visible && c.grassMesh?.visible);
-  const grassStats = { range: grass.range, meshes: visibleGrass.length, tufts: visibleGrass.reduce((n, c) => n + c.grassMesh.geometry.instanceCount, 0) };
+  const tufts = visibleGrass.reduce((n, c) => n + c.grassMesh.geometry.instanceCount, 0);
+  const grassStats = { range: grass.range, meshes: visibleGrass.length, tufts, triangles: tufts * grass.trianglesPerTuft };
   let carMeshes = 0, carDraws = 0; car.traverse(o => { if (o.isMesh) carMeshes++; }); car.traverseVisible(o => { if (o.isMesh) carDraws++; });
   let hiddenProps = 0;
   for (const chunk of chunks.values()) for (const [id, refs] of chunk.propInstances) {

@@ -42,8 +42,12 @@ test('grass render cost, mobile density and buffer ownership remain bounded acro
   const a = desktop.build(data), b = desktop.build(data), mobile = phone.build(data);
   assert.ok(a && b && mobile);
   assert.equal(a.castShadow, false); assert.equal(a.material.transparent, false);
-  assert.equal(a.geometry.attributes.position.count, 9);
-  assert.equal(mobile.geometry.instanceCount, Math.floor(a.geometry.instanceCount / 2));
+  assert.equal(a.geometry.attributes.position.count, 60); // five cheap blades, then five bent blades of three triangles
+  assert.deepEqual([a.geometry.drawRange.start, a.geometry.drawRange.count], [15, 45]);
+  assert.deepEqual([mobile.geometry.drawRange.start, mobile.geometry.drawRange.count], [0, 15]);
+  assert.equal(desktop.trianglesPerTuft, 15); assert.equal(phone.trianglesPerTuft, 5);
+  assert.equal(a.geometry.attributes.grassColor.count, data.roots.length / 3);
+  assert.equal(mobile.geometry.instanceCount, Math.floor(a.geometry.instanceCount * qualityLevels(true)[1].grass.density));
   assert.notEqual(a.geometry.attributes.position, b.geometry.attributes.position);
   const firstHalf = Array.from({ length: mobile.geometry.instanceCount }, (_, i) => [data.roots[i * 3], data.roots[i * 3 + 2]]);
   for (const xHalf of [0, 1]) for (const zHalf of [0, 1]) assert.ok(firstHalf.some(([x, z]) => Math.floor(x / 48) === xHalf && Math.floor(z / 48) === zHalf));
@@ -71,4 +75,22 @@ test('grass quality changes density and fade range live without rebuilding chunk
   assert.equal(mesh.visible, false);
   system.setQuality(levels[3].grass); system.update(mesh, 1, 0, 46, 48);
   assert.equal(mesh.visible, true);
+});
+
+test('each tuft takes the ground colour beneath it, and grass thins with distance but never pops', () => {
+  const world = createWorld(3), terrain = createTerrain(world), ground = terrain.build(0, 0, CHUNK, 4), data = buildGrass(world, 0, 0, ground);
+  assert.equal(data.colors.length, data.roots.length);
+  for (let i = 0; i < data.colors.length; i += 3) {
+    for (let k = 0; k < 3; k++) assert.ok(data.colors[i + k] >= 0 && data.colors[i + k] <= 1);
+    assert.ok(data.colors[i + 1] >= data.colors[i + 2], 'green over blue: a meadow colour');
+  }
+  const system = createGrass({ value: new THREE.Vector2() }), mesh = system.build(data), total = mesh.geometry.userData.total;
+  system.update(mesh, 0, 0, 48, 48); assert.equal(mesh.geometry.instanceCount, total);
+  let previous = total;
+  for (const x of [100, 120, 140, 160]) {
+    system.update(mesh, 0, 0, x, 48);
+    assert.ok(mesh.geometry.instanceCount <= previous); assert.ok(!mesh.visible || mesh.geometry.instanceCount >= total * .44);
+    previous = mesh.geometry.instanceCount;
+  }
+  system.animate(12.5, 10, 2, 10, 1.4, .3); // wind and car push are plain uniforms
 });
