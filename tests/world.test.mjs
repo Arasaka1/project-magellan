@@ -293,3 +293,16 @@ test('ramps launch from the back, the sides and odd angles instead of holding th
     }
   }
 });
+
+test('a car leaving slanted ground keeps its tilt in the air and settles once it lands', () => {
+  const world = createWorld(3), car = createVehicle(world);
+  Object.assign(car, { roll: .3, pitch: -.2, grounded: false, vy: 5, vx: 0, vz: 15, airtime: 0, landLock: 0 });
+  car.y = world.surface(car.x, car.z) + 2;
+  for (let i = 0; i < Math.round(.25 / FIXED_DT); i++) stepVehicle(car, {}, world, []);
+  assert.equal(car.grounded, false);
+  assert.ok(car.roll > .25, `roll kept: ${car.roll}`); assert.ok(car.pitch < -.15, `pitch kept: ${car.pitch}`);
+  for (let i = 0; i < Math.round(2 / FIXED_DT) && !car.grounded; i++) stepVehicle(car, {}, world, []);
+  for (let i = 0; i < Math.round(.5 / FIXED_DT); i++) stepVehicle(car, {}, world, []);
+  assert.equal(car.grounded, true);
+  assert.ok(Math.abs(car.roll - groundAt(world, car.x, car.z, car.heading).roll) < .05, 'settled onto the ground');
+});

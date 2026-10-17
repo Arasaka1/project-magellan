@@ -1005,3 +1005,20 @@ body.plane-mode #flightHint { display:flex; }
 body.plane-mode #driveHint, body.touch #flightHint { display:none!important; }
 @media(max-width:800px) { #flightHint { bottom:25px; font-size:9px; gap:12px; } }
 @media(max-width:700px) { #flightHint { display:none!important; } }
+
+/* In the air LAND and AUTO (autopilot) share the top row. */
+#touch .touch-center .auto-button {
+  display:none;
+  width:auto!important;
+  height:30px;
+  border-radius:9px;
+  font-size:9px;
+  letter-spacing:.14em;
+  color:var(--yellow);
+  border-color:rgba(233,201,138,.45);
+}
+#touch .touch-center .auto-button.active { color:var(--ink); }
+body.plane-mode #touch .touch-center .auto-button { display:block; }
+body.plane-mode #touch .touch-center .fly-button { grid-column:auto; }
+@media(max-width:700px) { #touch .touch-center .auto-button { height:28px; } }
+@media(max-width:1100px) { #flightHint { gap:11px; font-size:9px; left:calc(50% - 40px); } #flightHint kbd { margin-right:4px; } }

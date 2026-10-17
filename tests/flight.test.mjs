@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorld, createVehicle, stepVehicle, FIXED_DT } from '../world.mjs';
-import { toggleFlight, rotate, attitudeFromEuler, wingClearance, liftCoefficient, airDensity, TAKEOFF_SPEED, STALL_SPEED, CEILING, FLIGHT_TRANSFORM_SECONDS } from '../flight-motion.mjs';
+import { toggleFlight, setAutopilot, AUTOPILOT_SPEED, AUTOPILOT_CLEARANCE, rotate, attitudeFromEuler, wingClearance, liftCoefficient, airDensity, TAKEOFF_SPEED, STALL_SPEED, CEILING, FLIGHT_TRANSFORM_SECONDS } from '../flight-motion.mjs';
 
 const world = createWorld(3);
 function run(car, input, seconds, each) {
@@ -304,4 +304,45 @@ test('released controls keep the attitude: a dive stays a dive, a bank stays a b
   const lowAngle = low.climb;
   run(low, {}, .6);
   assert.ok(low.climb < lowAngle + .05, `not pulled up: ${lowAngle} -> ${low.climb}`);
+});
+
+const bankOf = car => { const m = rotate(q(car), [0, 1, 0]), w = rotate(q(car), [1, 0, 0]); return Math.atan2(w[1], m[1]); };
+test('autopilot levels a banked dive, then holds its height at cruise speed', () => {
+  const car = high(airborne(), 85);
+  [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(car.heading, .25, .7);
+  car.vy = -12; car.climbOut = false;
+  assert.equal(setAutopilot(car, true, world), true);
+  const held = car.autopilotY;
+  run(car, {}, 10);
+  assert.ok(Math.abs(bankOf(car)) < .02, `wings level: ${bankOf(car)}`);
+  run(car, {}, 20, c => assert.ok(Math.abs(c.y - held) < 12, `height held: ${c.y - held}`));
+  assert.ok(Math.abs(car.airspeed - AUTOPILOT_SPEED) < 4, `cruise: ${car.airspeed}`);
+  assert.equal(car.autopilot, true); assert.equal(car.flying, true);
+});
+
+test('autopilot rolls an inverted plane upright and climbs clear of the ground when low', () => {
+  const inverted = high(airborne(), 70);
+  [inverted.qx, inverted.qy, inverted.qz, inverted.qw] = attitudeFromEuler(inverted.heading, 0, 3);
+  inverted.climbOut = false; setAutopilot(inverted, true, world);
+  run(inverted, {}, 6);
+  assert.ok(Math.abs(bankOf(inverted)) < .05 && mastUp(inverted) > .99);
+  const low = airborne(); low.climbOut = false;
+  low.y = world.surface(low.x, low.z) + 25;
+  setAutopilot(low, true, world);
+  run(low, {}, 25);
+  assert.ok(altitude(low) > AUTOPILOT_CLEARANCE * .8, `climbed: ${altitude(low)}`);
+  assert.equal(low.flying, true);
+});
+
+test('any pilot input or folding the wings ends the autopilot; it needs the plane in the air', () => {
+  for (const key of ['up', 'jump', 'brake', 'left', 'yawLeft']) {
+    const car = high(airborne()); setAutopilot(car, true, world);
+    run(car, { [key]: true }, FIXED_DT);
+    assert.equal(car.autopilot, false, key);
+  }
+  const folding = high(airborne()); setAutopilot(folding, true, world); toggleFlight(folding);
+  run(folding, {}, FIXED_DT);
+  assert.equal(folding.autopilot, false);
+  const parked = createVehicle(world);
+  assert.equal(setAutopilot(parked, true, world), false);
 });

@@ -1,8 +1,8 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=physics-10';
-import { stepAmphibious } from './amphibious-motion.mjs?v=physics-10';
+import { createLakes, lakeRadius } from './lakes.mjs?v=physics-11';
+import { stepAmphibious } from './amphibious-motion.mjs?v=physics-11';
 import { controlAxis } from './controls.mjs?v=slider-1';
-import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-10';
+import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-11';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;
@@ -220,7 +220,7 @@ export function groundAt(world, x, z, heading) {
 export function createVehicle(world, x = 0, z = 0, heading = 0) {
   const g = groundAt(world, x, z, heading);
   const water = world.waterAt?.(x, z), floating = Boolean(water && water.depth > .9);
-  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, crashFold: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
+  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, autopilot: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, crashFold: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
 }
 export function resolveObstacles(car, obstacles, world) {
   for (let pass = 0; pass < 3; pass++) for (const o of obstacles) {
@@ -341,12 +341,15 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   // Rising terrain always supports the car, even during a jump's launch lock.
   car.y = Math.max(car.y, g.y);
   car.groundY = g.y;
-  car.pitch = mix(car.pitch, car.grounded ? g.pitch : clamp(-car.vy * .025, -.28, .24), 1 - Math.exp(-(car.grounded ? 14 : 3) * dt));
+  // In the air the car keeps the tilt it left the ground with (nothing pushes
+  // it level), drifting only slowly: the nose toward the flight path and the
+  // body toward upright. On the ground it settles onto the surface quickly.
+  car.pitch = mix(car.pitch, car.grounded ? g.pitch : clamp(-car.vy * .025, -.28, .24), 1 - Math.exp(-(car.grounded ? 14 : .7) * dt));
   if (!car.grounded && car.rollVelocity) {
     const before = Math.floor(car.airRoll / (Math.PI * 2));
     car.roll += car.rollVelocity * dt; car.airRoll += Math.abs(car.rollVelocity) * dt;
     car.rolls += Math.floor(car.airRoll / (Math.PI * 2)) - before;
-  } else car.roll = mix(car.roll, car.grounded ? g.roll : 0, 1 - Math.exp(-12 * dt));
+  } else car.roll = mix(car.roll, car.grounded ? g.roll : 0, 1 - Math.exp(-(car.grounded ? 12 : .5) * dt));
   car.impact *= Math.exp(-8 * dt);
   car.speed = car.vx * nx + car.vz * nz;
   car.distance += Math.hypot(car.x - oldX, car.z - oldZ);

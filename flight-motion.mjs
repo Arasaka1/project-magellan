@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=physics-10';
+import { waterWave } from './lakes.mjs?v=physics-11';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -72,6 +72,49 @@ export function eulerFromAttitude([x, y, z, w]) {
 function setAttitude(car, q) {
   const n = Math.hypot(...q); [car.qx, car.qy, car.qz, car.qw] = q.map(v => v / n);
   Object.assign(car, eulerFromAttitude([car.qx, car.qy, car.qz, car.qw]));
+}
+
+// Autopilot: levels the wings, holds a cruise speed and the altitude it was
+// engaged at, and climbs to stay AUTOPILOT_CLEARANCE above the highest ground
+// or water within a few hundred metres ahead. It flies through the same
+// controls a pilot would (throttle, pitch and roll), so the physics are
+// unchanged, and any pilot input takes over at once.
+export const AUTOPILOT_SPEED = 70, AUTOPILOT_CLEARANCE = 60; // m/s (250 km/h), metres
+function terrainAhead(car, world) {
+  const horizontal = Math.hypot(car.vx, car.vz) || 1, hx = car.vx / horizontal, hz = car.vz / horizontal;
+  let top = -Infinity;
+  for (const d of [0, 60, 120, 200, 300, 420]) {
+    const x = car.x + hx * d, z = car.z + hz * d, water = world.waterAt?.(x, z);
+    top = Math.max(top, water ? water.level : world.surface(x, z));
+  }
+  return top;
+}
+export function setAutopilot(car, on, world) {
+  car.autopilot = Boolean(on && car.flying);
+  if (car.autopilot) {
+    car.autopilotY = Math.min(Math.max(car.y, terrainAhead(car, world) + AUTOPILOT_CLEARANCE), CEILING - 60);
+    car.autopilotPath = null; car.climbOut = false;
+  }
+  return car.autopilot;
+}
+function autopilotAxes(car, world, dt) {
+  const q = [car.qx, car.qy, car.qz, car.qw], mast = rotate(q, [0, 1, 0]), wing = rotate(q, [1, 0, 0]);
+  const speed = car.airspeed || 1, bank = Math.atan2(wing[1], mast[1]); // + right wing down
+  const target = Math.min(Math.max(car.autopilotY, terrainAhead(car, world) + AUTOPILOT_CLEARANCE), CEILING - 60);
+  const path = Math.asin(clamp(car.vy / speed, -1, 1)), rate = car.autopilotPath === null ? 0 : (path - car.autopilotPath) / dt;
+  car.autopilotPath = path;
+  // Climb or descend toward the target height along a gentle path; when slow,
+  // trade height for speed first.
+  let wanted = clamp((target - car.y) * .012, -.12, .28);
+  if (speed < STALL_SPEED + 8) wanted = Math.min(wanted, -.06);
+  // Roll upright before pulling: a pull while banked only turns.
+  const upright = Math.abs(bank) < .5;
+  return {
+    throttle: clamp(.45 + (AUTOPILOT_SPEED - speed) * .08, -.5, 1),
+    pitch: upright ? clamp((wanted - path) * 6 - rate * 1.4, -1, 1) : 0,
+    roll: clamp(bank * 1.6, -1, 1),
+    yaw: 0,
+  };
 }
 
 function startFlying(car, climb) {
@@ -149,7 +192,7 @@ function touchdown(car, ground, water) {
 
 function land(car, ground, water) {
   const descent = -car.vy;
-  car.flying = false; car.flightMode = false; car.sink = 0; car.climb = 0;
+  car.flying = false; car.flightMode = false; car.autopilot = false; car.sink = 0; car.climb = 0;
   car.y = ground; car.vy = 0; car.airtime = 0; car.airDistance = 0; car.rollVelocity = 0;
   car.impact = Math.max(car.impact, clamp(descent * .02, 0, .3));
   // A steep or fast arrival scrubs speed, but the car always lands drivable.
@@ -161,7 +204,10 @@ function land(car, ground, water) {
 }
 
 function fly(car, input, world, dt, groundAt) {
-  const { throttle, pitch, roll, yaw } = flightAxes(input);
+  const manual = flightAxes(input);
+  // Any pilot input, or folding the wings, hands control back.
+  if (car.autopilot && (!car.flightMode || manual.throttle || manual.pitch || manual.roll || manual.yaw)) car.autopilot = false;
+  const { throttle, pitch, roll, yaw } = car.autopilot ? autopilotAxes(car, world, dt) : manual;
   const wings = car.flight, oldX = car.x, oldZ = car.z;
   const below = groundAt(world, car.x, car.z, car.heading).y;
   let q = [car.qx, car.qy, car.qz, car.qw];
@@ -266,7 +312,7 @@ function scrape(car, world) {
   const { depth } = wingClearance(car, world);
   if (!(depth > 0)) return;
   car.y += depth;
-  car.flying = false; car.flightMode = false; car.grounded = false; car.floating = false;
+  car.flying = false; car.flightMode = false; car.autopilot = false; car.grounded = false; car.floating = false;
   car.vx *= .9; car.vz *= .9; car.vy = Math.min(car.vy, 0);
   car.airtime = 0; car.airDistance = 0; car.rollVelocity = 0; car.landLock = 0; car.coyote = 0;
   car.impact = Math.max(car.impact, .3); car.wingCrashes = (car.wingCrashes || 0) + 1; car.crashFold = true;

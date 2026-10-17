@@ -1,8 +1,8 @@
-import { createWorld, CHUNK, GRID, ROAD_SPACING } from './world.mjs?v=physics-10';
-import { createTerrain } from './terrain.mjs?v=physics-10';
-import { buildGrass } from './grass-data.mjs?v=physics-10';
-import { buildWaterData, buildDistantWater } from './water-data.mjs?v=physics-10';
-import { FAR_SIZE, ULTRA_SIZE } from './streaming-layout.mjs?v=physics-10';
+import { createWorld, CHUNK, GRID, ROAD_SPACING } from './world.mjs?v=physics-11';
+import { createTerrain } from './terrain.mjs?v=physics-11';
+import { buildGrass } from './grass-data.mjs?v=physics-11';
+import { buildWaterData, buildDistantWater } from './water-data.mjs?v=physics-11';
+import { FAR_SIZE, ULTRA_SIZE } from './streaming-layout.mjs?v=physics-11';
 let world, terrain;
 self.onmessage = ({ data: job }) => {
   try {
