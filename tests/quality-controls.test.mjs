@@ -86,3 +86,11 @@ test('analog input combines with digital keys and scales car acceleration', () =
   assert.equal(analogLeft.heading, left.heading);
   assert.ok(gentle.heading > 0 && gentle.heading < left.heading);
 });
+
+test('Auto steps down even on machines too slow to fit 20 frames into its window', () => {
+  for (const ms of [125, 200]) {
+    const auto = createAutoQuality({ start: 3, max: 3 }); auto.reset(0);
+    for (let now = ms; now < 30000; now += ms) auto.sample(ms, now);
+    assert.equal(auto.level, 0, `${Math.round(1000 / ms)} fps`);
+  }
+});

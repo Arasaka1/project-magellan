@@ -37,7 +37,9 @@ export function createAutoQuality({ start, max, settleMs = 1500, downMs = 2000, 
       if (intervalMs > 250 || now < settledAt) return null;
       intervals.push([now, intervalMs]);
       while (intervals.length && intervals[0][0] < now - downMs) intervals.shift();
-      if (intervals.length < 20) return null;
+      // Judge once the window covers most of its time span, not a frame count:
+      // a machine at 8 fps never fits 20 frames into 2 s, yet needs Low most.
+      if (intervals.length < 5 || now - intervals[0][0] + intervals[0][1] < downMs * .75) return null;
       const mean = intervals.reduce((sum, [, ms]) => sum + ms, 0) / intervals.length;
       if (mean > SLOW_MS) {
         smoothSince = null; slowSince ??= now;

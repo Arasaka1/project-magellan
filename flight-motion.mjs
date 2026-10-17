@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=physics-13';
+import { waterWave } from './lakes.mjs?v=physics-15';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -24,8 +24,8 @@ export const airDensity = y => 1 - .65 * smoothstep(450, 750, y) - .3 * smoothst
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 export const SAFE_ALTITUDE = 35; // hands-off climb-out height above the ground
-// For this long after leaving the ground or water, a tail or nose touching
-// down is part of the take-off, not a crash.
+// For this long after leaving the ground or water, a tail, nose or wingtip
+// touching down is part of the take-off, not a crash.
 export const TAKEOFF_GRACE = 3; // seconds
 const BOAT_TRANSFORM_SECONDS = 2.4;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -159,7 +159,8 @@ function taxi(car, input, world, dt, groundAt) {
   retractHulls(car, dt);
   // Rotate at lift-off speed (holding Climb a little sooner): the nose comes
   // up to a flying angle of attack, and the wings take the weight.
-  if (speed > TAKEOFF_SPEED - (climbInput > 0 ? 4 : 0)) { startFlying(car, .03); car.vy = 1; rotateNose(car, -.16); car.climbOut = true; }
+  // Pushing the nose down keeps it rolling on its wheels, however fast.
+  if (climbInput >= 0 && speed > TAKEOFF_SPEED - (climbInput > 0 ? 4 : 0)) { startFlying(car, .03); car.vy = 1; rotateNose(car, -.16); car.climbOut = true; }
   return true;
 }
 
@@ -176,6 +177,10 @@ function touchdown(car, ground, water) {
   if (car.takeoff > 0 && car.airspeed < TAKEOFF_SPEED) { backToTaxi(car, ground, water); return; }
   const descent = -car.vy;
   car.impact = Math.max(car.impact, clamp(descent * .02, .05, .3));
+  // A gentle touch with the nose pushed down settles onto the wheels (or the
+  // hull) and rolls on with the wings out, instead of skipping along the
+  // ground; easing off lets it lift off again.
+  if (descent < 4 && car.pushingDown) { backToTaxi(car, ground, water); return; }
   if (car.airspeed >= TAKEOFF_SPEED) {
     const hard = descent > 7;
     car.y = ground + .05;
@@ -195,7 +200,7 @@ function touchdown(car, ground, water) {
 function backToTaxi(car, ground, water) {
   const floating = Boolean(water && water.depth > .55);
   car.flying = false; car.y = floating ? Math.max(ground, water.level - .52) : ground; car.vy = 0;
-  car.grounded = !floating; car.floating = floating; car.climb = 0; car.sink = 0; car.takeoff = 0;
+  car.grounded = !floating; car.floating = floating; car.climb = 0; car.sink = 0; car.takeoff = 0; car.shadow = 0; car.shadowVy = 0;
   car.airtime = 0; car.airDistance = 0; car.rollVelocity = 0; car.climbOut = false;
   setAttitude(car, attitudeFromEuler(car.heading, 0, 0));
 }
@@ -210,13 +215,14 @@ function land(car, ground, water) {
   car.roll = Math.atan2(Math.sin(car.roll), Math.cos(car.roll));
   if (water) {
     car.floating = true; car.grounded = false; car.waterDepth = water.depth; car.waterLevel = water.level;
-  } else { car.grounded = true; car.landLock = .1; car.coyote = .1; }
+  } else { car.grounded = true; car.landLock = .1; car.coyote = .1; car.shadow = 0; car.shadowVy = 0; }
 }
 
 function fly(car, input, world, dt, groundAt) {
   const simple = Boolean(input.simpleFlight);
   if (!simple) car.assistPath = null;
   const { throttle, pitch, roll, yaw, turn: arcadeTurn = 0 } = simple ? simpleAxes(car, input, world, dt) : flightAxes(input);
+  car.pushingDown = simple ? !!input.brake : pitch < 0; // the pilot, not the simple controls' own trim
   const wings = car.flight, oldX = car.x, oldZ = car.z;
   const below = groundAt(world, car.x, car.z, car.heading).y;
   let q = [car.qx, car.qy, car.qz, car.qw];
@@ -330,13 +336,15 @@ function scrape(car, world) {
   const { depth, point } = wingClearance(car, world);
   if (!(depth > 0)) return;
   car.y += depth;
-  // During the take-off a tail (over-rotating) or nose touching the ground or
-  // water is shrugged off: lifted clear and nudged level, flying on, or back
-  // to the take-off run if it is too slow to fly. A wingtip still ends it.
-  if (car.takeoff > 0 && !point.side) {
+  // During the take-off a tail (over-rotating), nose or wingtip touching the
+  // ground or water is shrugged off: lifted clear and nudged level (a wingtip
+  // rolls away from a sloping hillside), flying on, or back to the take-off
+  // run if it is too slow to fly. Afterwards, a wingtip touch ends the flight.
+  if (car.takeoff > 0) {
     car.vy = Math.max(car.vy, 0); car.impact = Math.max(car.impact, .08);
     if (car.airspeed < TAKEOFF_SPEED) { backToTaxi(car, car.y, world.waterAt?.(car.x, car.z)); return; }
-    rotateNose(car, point.tail ? .04 : -.04);
+    if (point.side) setAttitude(car, qMul([car.qx, car.qy, car.qz, car.qw], qAxis(0, 0, point.side * .05)));
+    else rotateNose(car, point.tail ? .04 : -.04);
     return;
   }
   car.flying = false; car.flightMode = false; car.grounded = false; car.floating = false;

@@ -1,8 +1,8 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=physics-13';
-import { stepAmphibious } from './amphibious-motion.mjs?v=physics-13';
+import { createLakes, lakeRadius } from './lakes.mjs?v=physics-15';
+import { stepAmphibious } from './amphibious-motion.mjs?v=physics-15';
 import { controlAxis } from './controls.mjs?v=slider-1';
-import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-13';
+import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-15';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;
@@ -254,6 +254,9 @@ function launchRoll(car, ramp, speed) {
 }
 export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   if (stepFlight(car, input, world, dt, groundAt) || stepAmphibious(car, input, world, dt, groundAt)) {
+    // Space climbs in the air and does nothing afloat: never let a press made
+    // there (or one held through the landing) fire a jump on touchdown.
+    car.jumpBuffer = 0; car.jumpHeld = !!input.jump;
     if (car.flight > .3) wingStrikes(car, obstacles, world);
     resolveObstacles(car, obstacles, world); return;
   }
@@ -264,7 +267,7 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   car.landLock = Math.max(0, car.landLock - dt);
   car.coyote = car.grounded ? .1 : Math.max(0, car.coyote - dt);
   if (car.jumpBuffer > 0 && car.coyote > 0) {
-    car.vy = 10 + clamp(car.vy, 0, 2); car.grounded = false; car.coyote = 0;
+    car.vy = 10 + clamp(car.vy, 0, 2); car.grounded = false; car.coyote = 0; car.shadow = 0; car.shadowVy = 0;
     car.jumpBuffer = 0; car.landLock = .16; car.airtime = 0; car.airDistance = 0; car.airRoll = 0; car.jumps++;
     const launchRamp = world.rampAt?.(car.x, car.z);
     if (launchRamp && featureLocal(launchRamp, car.x, car.z).along > launchRamp.length * .4) launchRoll(car, launchRamp, car.vx * Math.sin(launchRamp.heading) + car.vz * Math.cos(launchRamp.heading));
@@ -307,7 +310,7 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   if (car.grounded) {
     const rampSpeed = ramp ? car.vx * Math.sin(ramp.heading) + car.vz * Math.cos(ramp.heading) : 0;
     if (ramp && rampSpeed > 8 && rampPosition.along >= ramp.length - 1.5 && featureLocal(ramp, oldX, oldZ).along < ramp.length - 1.5) {
-      car.grounded = false; car.airtime = 0; car.airDistance = 0; car.airRoll = 0; car.coyote = 0; car.landLock = .06;
+      car.grounded = false; car.airtime = 0; car.airDistance = 0; car.airRoll = 0; car.coyote = 0; car.landLock = .06; car.shadow = 0; car.shadowVy = 0;
       car.vy = clamp(Math.max(car.vy, rampSpeed * ramp.rise * 1.7 / ramp.length), 6, 28); car.y = Math.max(car.y, g.y) + .03;
       launchRoll(car, ramp, rampSpeed);
     }
@@ -327,14 +330,15 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
       } else car.shadow = 0;
       if (car.shadow > (car.landLock ? .05 : .025)) {
         car.grounded = false; car.airtime = 0; car.airDistance = 0; car.airRoll = 0;
-        car.vy = clamp(car.shadowVy, -3, 28); car.y = g.y + car.shadow; car.shadow = 0;
+        car.vy = clamp(car.shadowVy, -3, 28); car.y = g.y + car.shadow; car.shadow = 0; car.shadowVy = 0;
         launchRoll(car, ramp, Math.abs(rampSpeed));
       } else { car.y = g.y; car.vy = surfaceVy; }
     }
   } else if (car.y <= g.y && (!car.landLock || car.vy < 0)) {
     car.impact = Math.max(car.impact, clamp(-car.vy * .016, 0, .3));
     car.bestJump = Math.max(car.bestJump, car.airDistance); car.landings++;
-    car.y = g.y; car.vy = surfaceVy; car.grounded = true; car.landLock = .1;
+    // A ballistic gap from before the jump must not relaunch the car.
+    car.y = g.y; car.vy = surfaceVy; car.grounded = true; car.landLock = .1; car.shadow = 0; car.shadowVy = 0;
     car.rollVelocity = 0;
     car.roll = Math.atan2(Math.sin(car.roll), Math.cos(car.roll));
   }

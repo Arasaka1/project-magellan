@@ -1,26 +1,26 @@
-import { createTerrain } from './terrain.mjs?v=physics-13';
-import { createWater } from './water.mjs?v=weather-3';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-13';
+import { createTerrain } from './terrain.mjs?v=physics-15';
+import { createWater } from './water.mjs?v=weather-5';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-15';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=physics-13';
-import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-13';
+import { createDebris } from './debris.mjs?v=physics-15';
+import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-15';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
 import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=sound-2';
 import { createVehicleAudio } from './vehicle-audio.mjs?v=weather-2';
 import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
-import { createGrass } from './grass.mjs?v=physics-13';
-import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=shadow-1';
+import { createGrass } from './grass.mjs?v=physics-15';
+import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=fixes-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
-import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-13';
-import { createClouds } from './clouds.mjs?v=weather-3';
-import { weatherAt } from './weather.mjs?v=weather-3';
+import { toggleFlight, flightAxes, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-15';
+import { createClouds } from './clouds.mjs?v=weather-5';
+import { weatherAt } from './weather.mjs?v=weather-5';
 import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=snow-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-13';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-13';
+import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-15';
+import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-15';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -188,22 +188,25 @@ const SKY = {
   snow: { top: new THREE.Color('#a4aeb3'), bottom: new THREE.Color('#c9cfd1'), cloud: new THREE.Color('#d2d7d9') },
 };
 const weather = { clock: 0, check: 0, target: { kind: 'clear', strength: 0, region: 'meadow' }, rain: 0, snow: 0, gust: new THREE.Vector3(), lastCamera: new THREE.Vector3(), cameraVelocity: new THREE.Vector3() };
-const weatherColor = new THREE.Color(), skyTop = new THREE.Color();
+const weatherColor = new THREE.Color(), skyTop = new THREE.Color(), overcast = { top: new THREE.Color(), bottom: new THREE.Color(), cloud: new THREE.Color() };
 function updateWeather(dt) {
   const step = running ? dt : 0;
   weather.clock += step;
   if ((weather.check -= step) <= 0 || !started) { weather.check = .5; weather.target = weatherAt(world, vehicle.x, vehicle.z, weather.clock, forcedWeather); }
-  // Showers build and clear over about ten seconds (at once when forced or before the start).
-  const ease = !started || forcedWeather ? 1 : 1 - Math.exp(-step / 4);
+  // Weather builds and clears over about twenty seconds (at once when forced or before the start).
+  const ease = !started || forcedWeather ? 1 : 1 - Math.exp(-step / 9);
   const { kind, strength } = weather.target;
   weather.rain += ((kind === 'rain' ? strength : 0) - weather.rain) * ease;
   weather.snow += ((kind === 'snow' ? strength : 0) - weather.snow) * ease;
-  const rain = smoothstep(0, .6, weather.rain), snow = smoothstep(0, .6, weather.snow), cover = Math.max(rain, snow);
-  // Sky, clouds and fog: blend toward the overcast of whichever is falling.
-  const grey = rain >= snow ? SKY.rain : SKY.snow;
-  skyColor.copy(SKY.clear.bottom).lerp(grey.bottom, cover);
-  skyTop.copy(SKY.clear.top).lerp(grey.top, cover); sky.material.uniforms.top.value.copy(skyTop);
-  sky.material.uniforms.cloudTone.value.copy(SKY.clear.cloud).lerp(grey.cloud, cover); sky.material.uniforms.cover.value = cover;
+  const rain = smoothstep(0, .85, weather.rain), snow = smoothstep(0, .85, weather.snow), cover = Math.min(1, Math.max(rain, snow) + Math.min(rain, snow) * .5);
+  // Sky, clouds and fog: blend toward an overcast mixed from rain's and
+  // snow's in proportion to how much of each is falling, so crossing from one
+  // to the other never switches the colours over in one frame.
+  const snowShare = rain + snow > 0 ? snow / (rain + snow) : 0;
+  for (const part of ['top', 'bottom', 'cloud']) overcast[part].copy(SKY.rain[part]).lerp(SKY.snow[part], snowShare);
+  skyColor.copy(SKY.clear.bottom).lerp(overcast.bottom, cover);
+  skyTop.copy(SKY.clear.top).lerp(overcast.top, cover); sky.material.uniforms.top.value.copy(skyTop);
+  sky.material.uniforms.cloudTone.value.copy(SKY.clear.cloud).lerp(overcast.cloud, cover); sky.material.uniforms.cover.value = cover;
   scene.fog.color.copy(toneMappedHorizon(skyColor, renderer.toneMappingExposure, weatherColor));
   clouds.setShade(rain);
   sun.intensity = 2.5 * (1 - .72 * cover); hemisphere.intensity = 1.6 * (1 + .12 * cover);
@@ -605,7 +608,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=physics-13', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=physics-15', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -907,11 +910,13 @@ function drawMap() {
   for (const dir of ['x', 'z']) for (let k = -1; k <= 1; k++) {
     const band = Math.round((dir === 'x' ? vehicle.z : vehicle.x) / ROAD_SPACING) + k;
     ctx.beginPath();
-    for (let off = -180; off <= 180; off += 5) {
+    // Across the whole map, however far it has zoomed out, in about 80 steps.
+    const reach = range + 30, stride = Math.max(5, reach / 40);
+    for (let off = -reach; off <= reach + 1e-6; off += stride) {
       const s = (dir === 'x' ? vehicle.x : vehicle.z) + off, c = world.roadCenter(s, band, dir);
       const x = dir === 'x' ? s : c, z = dir === 'x' ? c : s;
       const mx = w / 2 - (x - vehicle.x) * scale, my = h / 2 - (z - vehicle.z) * scale;
-      if (off === -180) ctx.moveTo(mx, my); else ctx.lineTo(mx, my);
+      if (off === -reach) ctx.moveTo(mx, my); else ctx.lineTo(mx, my);
     }
     ctx.stroke();
   }
@@ -1019,11 +1024,15 @@ function render(dt) {
   if (propeller) { propellerAngle += dt * pose.flight * (18 + Math.abs(pose.speed) * .45); propeller.rotation.z = propellerAngle; }
   body.position.y = -pose.impact * .3 * (1 - pose.transform);
   body.rotation.z = -pose.steer * Math.min(Math.abs(pose.speed) / 25, 1) * .055 * (1 - pose.transform) * (1 - pose.flight);
-  const throttle = throttleInput();
+  // With the wings out (taxiing or flying) the throttle is the flight axis:
+  // on the full controls ↑/↓ pitch and Shift dives, none of them throttle or
+  // brakes, so the engine sound and brake lamps follow W/S alone.
+  const wingsActive = vehicle.flying || (vehicle.flightMode && vehicle.flight === 1);
+  const throttle = wingsActive ? flightAxes(input).throttle : throttleInput();
   body.rotation.x = (throttle > 0 ? -.012 * throttle : -.024 * throttle) * (1 - pose.transform);
   wheelSpinners.forEach(w => w.rotation.x = pose.wheelAngle);
   wheelPivots.forEach(p => { if (p.name.startsWith('Wheel_F')) p.rotation.y = pose.steer * .4 * (1 - pose.transform); });
-  brakeMat.emissiveIntensity = throttle < -.05 || input.brake ? 2 : .25;
+  brakeMat.emissiveIntensity = throttle < -.05 || (input.brake && !wingsActive) ? 2 : .25;
   car.visible = cameraMode !== 2 || !running;
   contact.position.set(pose.x, world.surface(pose.x, pose.z) + .035, pose.z);
   contact.rotation.set(-Math.PI / 2 + pose.pitch, 0, -pose.heading, 'YXZ');

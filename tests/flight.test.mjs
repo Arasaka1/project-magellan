@@ -382,3 +382,37 @@ test('simple controls roll an inverted plane upright, and take off with W from t
   run(car, simple({ up: true }), 8);
   assert.equal(car.flying, true); assert.ok(car.y - start > 25, `climbed out: ${car.y - start}`);
 });
+
+test('a climb pressed in the air never fires a jump on landing, tapped or held', () => {
+  for (const hold of [false, true]) {
+    const car = high(airborne(), 25); car.climbOut = false;
+    car.y = world.surface(car.x, car.z) + 3; car.vy = -1;
+    car.jumpBuffer = .16; // the game's Space keydown writes this, even in the air
+    run(car, hold ? { jump: true, pitchUp: true } : {}, .3);
+    toggleFlight(car); // fold the wings and land
+    const jumps = car.jumps;
+    run(car, hold ? { jump: true } : {}, 3);
+    assert.equal(car.grounded, true); assert.equal(car.jumps, jumps, hold ? 'held' : 'tapped');
+  }
+});
+
+test('holding the nose down with the wings out keeps rolling on the ground, never skipping off it', () => {
+  // As in the game: ↑ is accelerate while the wings unfold, then nose-down.
+  const car = createVehicle(world); toggleFlight(car);
+  let flights = 0, hits = 0, last = false, fastest = 0;
+  run(car, { up: true, throttleUp: false, pitchDown: true }, 14, c => {
+    if (c.flying && !last) flights++; last = c.flying; fastest = Math.max(fastest, c.speed);
+    if (c.impact > .05) hits++;
+  });
+  assert.equal(flights, 0); assert.equal(hits, 0); assert.ok(fastest > TAKEOFF_SPEED, 'rolled faster than lift-off speed');
+  // Easing off lets it lift off.
+  run(car, { throttleUp: true }, 4);
+  assert.equal(car.flying, true);
+});
+
+test('a gentle touchdown at speed with the nose pushed down rolls on with the wings out', () => {
+  const car = high(airborne(), 60); car.climbOut = false; car.takeoff = 0;
+  car.y = world.surface(car.x, car.z) + .4; car.vy = -1.5;
+  run(car, { throttleUp: true, pitchDown: true }, 1);
+  assert.equal(car.flying, false); assert.equal(car.flightMode, true); assert.equal(car.wingCrashes ?? 0, 0);
+});

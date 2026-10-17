@@ -3,7 +3,7 @@
 // and it rains (or snows) when the roll falls under the region's chance. So
 // weather is the same for everyone in an area for a couple of minutes, then
 // moves on; the game eases between states, so nothing switches abruptly.
-import { hash } from './world.mjs?v=physics-13';
+import { hash } from './world.mjs?v=physics-15';
 
 export const WEATHER_CELL = 120; // seconds
 export const WEATHER_AREA = 2000; // metres

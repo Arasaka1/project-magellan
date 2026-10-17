@@ -306,3 +306,19 @@ test('a car leaving slanted ground keeps its tilt in the air and settles once it
   assert.equal(car.grounded, true);
   assert.ok(Math.abs(car.roll - groundAt(world, car.x, car.z, car.heading).roll) < .05, 'settled onto the ground');
 });
+
+test('a jump made mid-crest leaves no stored gap to relaunch the car after landing', () => {
+  const world = createWorld(3);
+  const flat = { ...world, height: () => 0, surface: () => 0, gradient: () => ({ x: 0, z: 0 }), rampAt: () => null, roadAt: () => ({ d: 0 }), waterAt: () => null, featuresNear: () => [] };
+  const car = createVehicle(flat, 0, 0, 0);
+  Object.assign(car, { vz: 30, speed: 30, y: 0, groundY: 0, grounded: true, shadow: .02, shadowVy: 6 }); // just short of separating
+  stepVehicle(car, { jump: true }, flat, []);
+  let landed = false;
+  for (let i = 0; i < Math.round(3 / FIXED_DT); i++) {
+    const was = car.grounded;
+    stepVehicle(car, {}, flat, []);
+    if (car.grounded) landed = true;
+    assert.ok(!(landed && was && !car.grounded), 'relaunched itself on flat ground');
+  }
+  assert.ok(landed); assert.equal(car.jumps, 1);
+});
