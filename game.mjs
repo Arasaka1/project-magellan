@@ -14,7 +14,7 @@ import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
 import { createGrass } from './grass.mjs?v=physics-11';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=shadow-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
-import { toggleFlight, setAutopilot, AUTOPILOT_SPEED, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-11';
+import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-11';
 import { createClouds } from './clouds.mjs?v=physics-11';
 import * as THREE from 'three';
 import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-11';
@@ -658,6 +658,7 @@ function syncInput() {
   for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k);
   const touches = [...touchStates.values()];
   for (const [axis, codes] of Object.entries(flightKeys)) input[axis] = codes.some(code => keyStates.has(code)) || touches.includes(flightTouch[axis]);
+  input.simpleFlight = Boolean(settings.simpleFlight);
   // Analog axes add to the digital keys; physics clamps the combined value.
   input.steer = slider.pointer === null ? undefined : steerAxis(slider.value, settings.sensitivity);
 }
@@ -701,7 +702,7 @@ function newWorld() {
   debris.clear(); treeBreakage?.clear(); audio?.breaks.clear(); audio?.vehicle.clear();
   const url = new URL(location.href); url.searchParams.set('seed', seed); history.replaceState(null, '', url);
   beginWorldLoad(continueDriving); resetCamera(); syncSeed(); updateHUD(); drawMap();
-  reportedLanding = 0; reportedBoat = false; reportedFlying = false; reportedAutopilot = false; clouds.reset(seed); $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
+  reportedLanding = 0; reportedBoat = false; reportedFlying = false; clouds.reset(seed); $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
 }
 function syncSeed() { $('seedTxt').textContent = String(seed).padStart(6, '0'); }
 $('startBtn').onclick = resume; $('pauseBtn').onclick = pause; $('newWorld').onclick = newWorld;
@@ -715,14 +716,15 @@ function toggleFly() {
   updateHUD();
 }
 $('flyBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (running) toggleFly(); });
-function toggleAutopilot() {
-  if (!vehicle.flying) { toast(vehicle.flightMode ? `Autopilot engages once airborne — lift off at ${Math.round(TAKEOFF_SPEED * 3.6)} km/h` : 'Autopilot works in the air — press F to fly'); return; }
-  const on = setAutopilot(vehicle, !vehicle.autopilot, world);
-  reportedAutopilot = on;
-  toast(on ? `Autopilot on · holding ${Math.round(vehicle.autopilotY - world.surface(vehicle.x, vehicle.z))} m at ${Math.round(AUTOPILOT_SPEED * 3.6)} km/h · any control takes over` : 'Autopilot off — you have control');
+// T switches between full three-axis flight and the simple arcade controls
+// (bank to turn, climb/dive, levels itself when released). Remembered.
+function toggleFlightControls() {
+  settings.simpleFlight = !settings.simpleFlight; saveSettings(); syncInput();
+  toast(settings.simpleFlight ? coarse ? 'Simple flight · slider turns · CLIMB / DIVE · ↑↓ throttle' : 'Simple flight · A/D turn · Space/Shift climb and dive · W/S throttle'
+    : coarse ? 'Full flight · slider rolls · CLIMB / DIVE pitch · ↑↓ throttle' : 'Full flight · ↑/↓ pitch · A/D roll · Q/E yaw · W/S throttle');
   updateHUD();
 }
-$('autoBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (running) toggleAutopilot(); });
+$('simpleBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (running) toggleFlightControls(); });
 function cycleCamera() {
   cameraMode = (cameraMode + 1) % 3; resetCamera();
   $('cameraBtn').textContent = 'Camera: ' + ['Chase', 'Wide', 'Bonnet'][cameraMode];
@@ -753,7 +755,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyC') cycleCamera();
   if (e.code === 'KeyR') recover();
   if (e.code === 'KeyF') toggleFly();
-  if (e.code === 'KeyT') toggleAutopilot();
+  if (e.code === 'KeyT') toggleFlightControls();
   if (e.code === 'KeyN') newWorld();
   if (e.code === 'KeyL') { lightsOn = !lightsOn; headlight.intensity = lightsOn ? 75 : 0; headMat.emissiveIntensity = lightsOn ? 2 : .45; toast(lightsOn ? 'Headlights on' : 'Headlights off'); }
 });
@@ -893,10 +895,11 @@ function updateHUD() {
   touchBrake.setAttribute('aria-label', planeMode ? 'Dive' : vehicle.floating ? 'Slow boat' : 'Drift');
   document.body.classList.toggle('plane-mode', planeMode);
   $('flyBtn').textContent = planeMode ? 'LAND' : 'FLY'; $('flyBtn').setAttribute('aria-label', planeMode ? 'Land' : 'Fly');
-  $('autoBtn').classList.toggle('active', Boolean(vehicle.autopilot)); $('autoBtn').setAttribute('aria-pressed', String(Boolean(vehicle.autopilot)));
-  $('autopilotAction').textContent = vehicle.autopilot ? 'auto off' : 'auto';
+  const simple = Boolean(settings.simpleFlight);
+  $('simpleBtn').classList.toggle('active', simple); $('simpleBtn').setAttribute('aria-pressed', String(simple));
+  $('flightHint').classList.toggle('simple', simple);
   const altitude = vehicle.y - world.surface(vehicle.x, vehicle.z);
-  $('surfaceState').textContent = flying && vehicle.autopilot ? 'AUTOPILOT' : flying ? vehicle.alpha > .24 || vehicle.airspeed < STALL_SPEED ? 'STALL WARNING — LOWER THE NOSE' : vehicle.flightMode ? 'FLYING' : 'GLIDING IN TO LAND'
+  $('surfaceState').textContent = flying ? vehicle.alpha > .24 || vehicle.airspeed < STALL_SPEED ? 'STALL WARNING — LOWER THE NOSE' : vehicle.flightMode ? 'FLYING' : 'GLIDING IN TO LAND'
     : unfolding ? vehicle.flightMode ? 'WINGS UNFOLDING' : 'FOLDING WINGS' : taxiing ? 'TAXIING' : transforming ? vehicle.boatMode ? 'DEPLOYING BOAT HULL' : 'RETURNING TO WHEELS' : vehicle.boatMode ? 'BOAT MODE' : !vehicle.grounded ? 'A LITTLE AIR' : input.brake && speed > 10 ? 'TAKE IT SIDEWAYS' : vehicle.onRoad ? 'ON THE ROAD' : 'OFF THE BEATEN PATH';
   $('airtime').textContent = flying ? `ALT ${Math.round(altitude)} M · ${vehicle.vy >= 0 ? '+' : '−'}${Math.abs(vehicle.vy).toFixed(0)} M/S`
     : unfolding ? `WINGS · ${Math.round(vehicle.flight * 100)}%` : taxiing ? `LIFT-OFF AT ${Math.round(TAKEOFF_SPEED * 3.6)} KM/H` : transforming ? `TRANSFORMING · ${Math.round((vehicle.boatMode ? vehicle.transform : 1 - vehicle.transform) * 100)}%` : vehicle.floating ? `${vehicle.waterDepth.toFixed(1)} M WATER · W/S THROTTLE` : !vehicle.grounded ? `${Math.round(vehicle.airDistance)} M · ${vehicle.airtime.toFixed(1)} S AIR` : vehicle.bestJump > 5 ? 'BEST JUMP ' + Math.round(vehicle.bestJump) + ' M' : vehicle.bestAir > .4 ? 'BEST AIR ' + vehicle.bestAir.toFixed(1) + ' S' : 'READY TO ROAM';
@@ -925,7 +928,7 @@ const debris = createDebris(scene), rollPivot = new THREE.Vector3();
 let treeBreakage = null;
 const vehiclePresentation = createVehiclePresentation(vehicle, (x, z, heading) => groundAt(world, x, z, heading).y);
 let previousTime = performance.now(), accumulator = 0, uiTime = 0, mapTime = 0, idleRenderAt = 0, reportedLanding = 0;
-let reportedBoat = vehicle.boatMode, reportedFlying = vehicle.flying, reportedAutopilot = false;
+let reportedBoat = vehicle.boatMode, reportedFlying = vehicle.flying;
 function updateDesiredCamera(pose = vehicle) {
   vehiclePosition.set(pose.x, pose.y, pose.z);
   // In flight the camera follows the nose in three dimensions, so it stays
@@ -1043,12 +1046,8 @@ function frame(now) {
     }
     if (vehicle.flying !== reportedFlying) {
       reportedFlying = vehicle.flying;
-      toast(reportedFlying ? coarse ? 'Airborne · CLIMB and DIVE pitch · AUTO flies for you · LAND folds the wings' : 'Airborne · Space climbs · Shift dives · T autopilot · F lands'
+      toast(reportedFlying ? coarse ? 'Airborne · CLIMB and DIVE pitch · SIMPLE for easy controls · LAND folds the wings' : 'Airborne · Space climbs · Shift dives · T simple controls · F lands'
         : vehicle.floating ? 'Splashdown — back to boat' : 'Touchdown');
-    }
-    if (vehicle.autopilot !== reportedAutopilot) {
-      reportedAutopilot = vehicle.autopilot;
-      if (!reportedAutopilot && vehicle.flying) toast('Autopilot off — you have control');
     }
     if (vehicle.landings > reportedLanding) {
       reportedLanding = vehicle.landings;
@@ -1085,5 +1084,5 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
   const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.mesh.count ?? 0), 0);
-  return { horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, autopilot: vehicle.autopilot, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  return { horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: Boolean(settings.simpleFlight), airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };
