@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waterWave, lakeExtent } from './lakes.mjs?v=physics-9';
+import { waterWave, lakeExtent } from './lakes.mjs?v=physics-10';
 
 // A small tileable wave texture, generated once (no download): R/G hold the
 // surface slope from a sum of periodic waves, B a soft noise used to break up
@@ -213,7 +213,8 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
   wakes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const life = [2.6, 2.2, 2.4], spread = Math.tan(19.5 * Math.PI / 180);
   function emit(ripple) { if (ripples.length >= capacity) ripples.shift(); ripples.push(ripple); }
-  let emission = 0, lastY = null, airborne = 0, causticCheck = 0;
+  let emission = 0, lastY = null, airborne = 0, causticCheck = 0, wasWet = false;
+  const splashes = []; // { x, z, power } for the sound, drained each frame
   function update(world, pose, dt) {
     time.value = pose.time; emission += dt;
     const water = world.waterAt(pose.x, pose.z);
@@ -221,12 +222,16 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
     const fall = lastY === null || dt <= 0 ? 0 : (lastY - pose.y) / dt; lastY = pose.y;
     if (!water || pose.y > water.level + .6) airborne = Math.max(airborne, water ? pose.y - water.level : 1.5);
     const s = Math.sin(pose.heading), c = Math.cos(pose.heading), speed = Math.abs(pose.speed);
-    if (water && pose.y < water.level + .2) {
+    const wet = Boolean(water && pose.y < water.level + .2);
+    if (wet) {
       if (airborne > 1.1 || (airborne > .6 && fall > 4)) {
         const power = Math.min(1, .45 + airborne * .12 + fall * .03);
+        splashes.push({ x: pose.x, z: pose.z, power });
         for (let k = 0; k < 3; k++) emit({ kind: 2, x: pose.x, z: pose.z, level: water.level, age: -k * .14, heading: 0, power, grow: 2.6 + k * 1.3 + power * 2, base: 1.2 + k * .6 });
         emit({ kind: 1, x: pose.x, z: pose.z, level: water.level, age: 0, heading: 0, power, grow: 1.4, base: 2.4 });
       }
+      // Driving in from the shore at speed throws up a smaller splash.
+      else if (!wasWet && speed > 4) splashes.push({ x: pose.x, z: pose.z, power: Math.min(.6, speed / 40) });
       airborne = 0;
       if (emission >= (speed > 1 ? .07 : .6)) {
         emission = 0;
@@ -244,6 +249,7 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         }
       }
     }
+    wasWet = wet;
     for (let i = ripples.length - 1; i >= 0; i--) {
       const r = ripples[i]; r.age += dt;
       if (r.vx && r.age > 0) { r.x += r.vx * dt; r.z += r.vz * dt; }
@@ -273,10 +279,10 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
   }
   function clear() {
     for (const mesh of patches.values()) { scene.remove(mesh); mesh.geometry.dispose(); }
-    patches.clear(); wanted.clear(); ripples.length = 0; wakes.count = 0; emission = 0; lastY = null; airborne = 0; causticCheck = 0; caustic.value.set(0, 0, 0, 0);
+    patches.clear(); wanted.clear(); ripples.length = 0; wakes.count = 0; emission = 0; lastY = null; airborne = 0; causticCheck = 0; wasWet = false; splashes.length = 0; caustic.value.set(0, 0, 0, 0);
     distant.geometry.dispose(); distant.geometry = new THREE.BufferGeometry(); distantRanges = []; distantIndex = null; distantCount = 0;
   }
   const setDetail = on => { detail.value = on ? 1 : 0; causticCheck = 0; if (!on) caustic.value.z = 0; };
-  return { sync, install, update, clear, installDistant, setDetail, causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
+  return { sync, install, update, clear, installDistant, setDetail, drainSplashes: () => splashes.splice(0), causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
     get count() { return patches.size; }, get wakeCount() { return ripples.length; } };
 }

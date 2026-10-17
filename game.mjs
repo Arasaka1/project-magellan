@@ -1,23 +1,24 @@
-import { createTerrain } from './terrain.mjs?v=physics-9';
-import { createWater } from './water.mjs?v=water-1';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-9';
+import { createTerrain } from './terrain.mjs?v=physics-10';
+import { createWater } from './water.mjs?v=sound-1';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-10';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=physics-9';
-import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-9';
+import { createDebris } from './debris.mjs?v=physics-10';
+import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-10';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
 import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
-import { createBreakAudio } from './break-audio.mjs?v=grass-1';
-import { installSunShadowFade } from './shadow-fade.mjs?v=grass-1';
-import { createGrass } from './grass.mjs?v=physics-9';
-import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=slider-1';
+import { createBreakAudio } from './break-audio.mjs?v=sound-2';
+import { createVehicleAudio } from './vehicle-audio.mjs?v=sound-2';
+import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
+import { createGrass } from './grass.mjs?v=physics-10';
+import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=shadow-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
-import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-9';
-import { createClouds } from './clouds.mjs?v=physics-9';
+import { toggleFlight, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-10';
+import { createClouds } from './clouds.mjs?v=physics-10';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-9';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-9';
+import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-10';
+import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-10';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -128,6 +129,20 @@ sun.shadow.mapSize.setScalar(levels[qualityLevel].shadow);
 Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, near: 1, far: 230 });
 sun.shadow.bias = -.00015; sun.shadow.normalBias = .04;
 scene.add(sun, sun.target);
+// A second, coarse shadow map for the same sun reaches about 150 m ahead, so
+// trees and rocks cast shadows long before the sharp map around the car
+// arrives. Its light adds nothing itself; the shader blends the two maps.
+const FAR_SHADOW = 110, FAR_SHADOW_AHEAD = 70;
+const farSun = new THREE.DirectionalLight('#fff0d2', 0);
+Object.assign(farSun.shadow.camera, { left: -FAR_SHADOW, right: FAR_SHADOW, top: FAR_SHADOW, bottom: -FAR_SHADOW, near: 1, far: 700 });
+farSun.shadow.bias = -.0004; farSun.shadow.normalBias = .15;
+function setFarShadow(size) {
+  farSun.castShadow = size > 0;
+  if (size && farSun.shadow.mapSize.x !== size) { farSun.shadow.mapSize.setScalar(size); farSun.shadow.map?.dispose(); farSun.shadow.map = null; }
+}
+setFarShadow(levels[qualityLevel].farShadow);
+scene.add(farSun, farSun.target); // after the sun: it must be the second directional shadow
+const sunDirection = new THREE.Vector3(-65, 100, 45).normalize();
 // A softly graded sky travels with the camera; the horizon never runs out.
 const sky = new THREE.Mesh(new THREE.SphereGeometry(6000, 24, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false,
@@ -337,7 +352,7 @@ function processBreakage() {
     if (k !== undefined) { impostors.mesh.getMatrixAt(k, matrix); matrix.scale(scaleVec.set(0, 0, 0)); impostors.mesh.setMatrixAt(k, matrix); impostors.mesh.instanceMatrix.needsUpdate = true; }
     debris.burst(prop);
     if (prop.type === 'tree') treeBreakage.burst({ ...prop, variant: nature.variantFor(prop) });
-    if (!muted && audio) audio.breaks.play(prop.type, Math.hypot(prop.vx, prop.vz));
+    if (!muted && audio) audio.breaks.play(prop.type, Math.hypot(prop.vx, prop.vz), panAt(prop.x, prop.z));
   }
 }
 function disposeChunk(chunk) {
@@ -540,7 +555,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=physics-9', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=physics-10', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -582,17 +597,47 @@ shadowContext.fillStyle = shadowGradient; shadowContext.fillRect(0, 0, 64, 64);
 const contact = new THREE.Mesh(new THREE.PlaneGeometry(3.9, 6), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }));
 contact.rotation.x = -Math.PI / 2; scene.add(contact);
 
+// Left/right placement of a world point as heard from the camera.
+const cameraRight = new THREE.Vector3(), shadowAhead = new THREE.Vector3(), farAhead = new THREE.Vector3();
+function panAt(x, z) {
+  cameraRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  const dx = x - camera.position.x, dz = z - camera.position.z;
+  return Math.max(-1, Math.min(1, (dx * cameraRight.x + dz * cameraRight.z) / Math.max(4, Math.hypot(dx, dz)))) * .8;
+}
+const heard = { impact: 0, wingStrikes: 0, wingCrashes: 0, surface: 'road', surfaceCheck: 0, flightThump: -1 };
+function updateSound(throttle, splashes, dt) {
+  const v = vehicle;
+  if ((heard.surfaceCheck -= dt) <= 0) {
+    heard.surfaceCheck = .25;
+    heard.surface = v.onRoad ? 'road' : world.desertAt(v.x, v.z) || world.waterAt(v.x, v.z) || world.lakesNear(v.x, v.z, 0).length ? 'sand' : 'dirt';
+  }
+  const slip = Math.abs(v.vx * Math.cos(v.heading) - v.vz * Math.sin(v.heading));
+  audio.vehicle.update({ speed: v.speed, throttle, grounded: v.grounded, floating: v.floating, flying: v.flying, airspeed: v.airspeed, transform: v.transform, flight: v.flight, slip, surface: heard.surface, waterDepth: v.waterDepth }, dt);
+  // Events: a fresh rise in impact is a landing, bounce or knock; splashes come
+  // from the water; the flight model counts wing strikes and scrapes.
+  const decayed = heard.impact * Math.exp(-8 * dt);
+  // Skimming the ground in flight hops many times a second; only a real bounce
+  // (not every graze) thumps, and at most every 0.8 s.
+  const t = audio.context.currentTime;
+  if (v.impact > decayed + .03 && !v.floating && !splashes.length && (!v.flightMode || (v.impact > .1 && t - heard.flightThump > .8))) {
+    audio.vehicle.thump(v.impact); if (v.flightMode) heard.flightThump = t;
+  }
+  heard.impact = v.impact;
+  for (const splash of splashes) audio.vehicle.splash(splash.power, panAt(splash.x, splash.z));
+  if ((v.wingStrikes || 0) > heard.wingStrikes && v.lastStrike) audio.vehicle.strike(v.lastStrike.heavy, panAt(v.lastStrike.x, v.lastStrike.z));
+  if ((v.wingCrashes || 0) > heard.wingCrashes) audio.vehicle.scrape(.8);
+  heard.wingStrikes = v.wingStrikes || 0; heard.wingCrashes = v.wingCrashes || 0;
+}
 let audio = null;
 function initAudio() {
   if (audio) { audio.context.resume(); return; }
   try {
-    const context = new AudioContext(), oscillator = context.createOscillator(), filter = context.createBiquadFilter(), gain = context.createGain(), master = context.createGain(), limiter = context.createDynamicsCompressor();
-    oscillator.type = 'sawtooth'; filter.type = 'lowpass'; gain.gain.value = 0;
+    const context = new AudioContext(), master = context.createGain(), limiter = context.createDynamicsCompressor();
     master.gain.value = muted ? 0 : 1;
     limiter.threshold.value = -10; limiter.knee.value = 12; limiter.ratio.value = 4;
     master.connect(limiter).connect(context.destination);
-    oscillator.connect(filter).connect(gain).connect(master); oscillator.start();
-    audio = { context, oscillator, filter, gain, master, breaks: createBreakAudio(context, master) };
+    const sounds = createVehicleAudio(context, master);
+    audio = { context, master, vehicle: sounds, breaks: createBreakAudio(context, master, 8, sounds.echo) };
   } catch {}
 }
 function syncSound() {
@@ -653,7 +698,7 @@ function resetCamera() {
 function newWorld() {
   const continueDriving = running || resumeAfterLoad && loading;
   saveRecord(); clearInput(); seed = freshSeed(); world = createWorld(seed); vehicle = createVehicle(world); roadUniforms.uRoadPhase.value = world.phase;
-  debris.clear(); treeBreakage?.clear(); audio?.breaks.clear();
+  debris.clear(); treeBreakage?.clear(); audio?.breaks.clear(); audio?.vehicle.clear();
   const url = new URL(location.href); url.searchParams.set('seed', seed); history.replaceState(null, '', url);
   beginWorldLoad(continueDriving); resetCamera(); syncSeed(); updateHUD(); drawMap();
   reportedLanding = 0; reportedBoat = false; reportedFlying = false; clouds.reset(seed); $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
@@ -730,6 +775,7 @@ function applyQuality(index) {
     // Three.js only allocates the shadow target once; release it to resize.
     sun.shadow.map?.dispose(); sun.shadow.map = null;
   }
+  setFarShadow(level.farShadow);
   grass.setQuality(level.grass);
   // Distant tree stand-ins are skipped on Low.
   impostorsEnabled = index > 0;
@@ -932,14 +978,21 @@ function render(dt) {
   scene.fog.far = fogUniforms.uFogFar.value = 1450 + aloft * 2900;
   const near = cameraMode === 2 && running ? .1 : .1 + aloft * 1.4;
   if (Math.abs(camera.near - near) > .02) { camera.near = near; camera.updateProjectionMatrix(); }
-  sun.position.set(pose.x - 65, pose.y + 100, pose.z + 45); sun.target.position.copy(car.position); sun.target.updateMatrixWorld();
-  profiler.measure('waterUpdate', () => waterSystem.update(world, pose, dt));
-  if (audio && running) {
-    const t = audio.context.currentTime, speed = Math.abs(vehicle.flying ? vehicle.airspeed : vehicle.speed);
-    audio.gain.gain.setTargetAtTime(muted ? 0 : .008 + speed * .00045 + Math.max(0, throttle) * .006, t, .12);
-    audio.oscillator.frequency.setTargetAtTime(42 + speed * 3.4 + Math.max(0, throttle) * 14, t, .1);
-    audio.filter.frequency.setTargetAtTime(180 + speed * 12, t, .1);
+  // The 96 m shadow map sits 18 m ahead of the car along the view, where the
+  // ground is actually seen, so shadows fade in well ahead even at speed.
+  camera.getWorldDirection(shadowAhead).setY(0);
+  if (shadowAhead.lengthSq() < 1e-4) shadowAhead.set(Math.sin(pose.heading), 0, Math.cos(pose.heading));
+  shadowAhead.normalize().multiplyScalar(18).add(car.position);
+  sun.position.set(shadowAhead.x - 65, pose.y + 100, shadowAhead.z + 45); sun.target.position.copy(shadowAhead); sun.target.updateMatrixWorld();
+  if (farSun.castShadow) {
+    camera.getWorldDirection(farAhead).setY(0);
+    if (farAhead.lengthSq() < 1e-4) farAhead.set(Math.sin(pose.heading), 0, Math.cos(pose.heading));
+    farAhead.normalize().multiplyScalar(FAR_SHADOW_AHEAD).add(car.position);
+    farSun.target.position.copy(farAhead); farSun.position.copy(farAhead).addScaledVector(sunDirection, 320); farSun.target.updateMatrixWorld();
   }
+  profiler.measure('waterUpdate', () => waterSystem.update(world, pose, dt));
+  const splashes = waterSystem.drainSplashes();
+  if (audio && running && !muted) profiler.measure('audio', () => updateSound(throttle, splashes, dt));
   const renderStarted = performance.now();
   renderer.render(scene, camera);
   profiler.record('renderCPU', performance.now() - renderStarted, testMode ? { time: pose.time, transform: pose.transform, wakes: waterSystem.wakeCount } : undefined);
@@ -1017,5 +1070,5 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
   const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.mesh.count ?? 0), 0);
-  return { horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  return { horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };

@@ -227,6 +227,18 @@ test('a jumping car with its wings half out starts to glide', () => {
   assert.equal(car.flying, true);
 });
 
+test('a small bump while the wings unfold stays driving: no flight, no touchdown, the wings keep opening', () => {
+  const car = createVehicle(world); car.vx = 0; car.vz = 20; car.speed = 20;
+  toggleFlight(car);
+  run(car, { up: true }, FLIGHT_TRANSFORM_SECONDS * .5);
+  car.grounded = false; car.vy = 2; car.y += .25; car.airtime = 0; // a hop off a bump
+  const flights = car.flights;
+  run(car, { up: true }, .4, c => assert.equal(c.flying, false));
+  assert.equal(car.flights, flights); assert.equal(car.flightMode, true);
+  run(car, { up: true }, FLIGHT_TRANSFORM_SECONDS * .6);
+  assert.equal(car.flight, 1);
+});
+
 test('a wingtip touching the ground ends the flight: it becomes the car and lands, never buried', () => {
   for (const side of ['rollLeft', 'rollRight']) {
     const car = airborne();

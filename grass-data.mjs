@@ -1,4 +1,4 @@
-import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=physics-9';
+import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=physics-10';
 
 export const GRASS_GRID = 40;
 export const MAX_GRASS_PER_CHUNK = GRASS_GRID * GRASS_GRID;

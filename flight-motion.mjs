@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=physics-9';
+import { waterWave } from './lakes.mjs?v=physics-10';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -279,8 +279,12 @@ export function stepFlight(car, input, world, dt, groundAt) {
   car.flight = clamp(car.flight + (car.flightMode ? dt : -dt * (car.crashFold ? 3.5 : 1)) / FLIGHT_TRANSFORM_SECONDS, 0, 1);
   if (car.flight === 0 || car.flightMode) car.crashFold = false;
   if (!car.flying) {
-    // A jumping car with its wings half out starts to glide.
-    if (car.flightMode && car.flight >= .35 && !car.grounded && !car.floating) startFlying(car);
+    // A jumping car with its wings half out starts to glide. A bump that
+    // barely lifts the wheels is still driving: only a real jump (well clear
+    // of the ground, or in the air a while) becomes flight, so the hop's
+    // landing is not taken for a touchdown that folds the wings.
+    const clear = !car.grounded && !car.floating && (car.y - groundAt(world, car.x, car.z, car.heading).y > 1.2 || car.airtime > .45);
+    if (car.flightMode && car.flight >= .35 && clear) startFlying(car);
     else if (car.flightMode && car.flight === 1) return taxi(car, input, world, dt, groundAt);
     else return false;
   }
@@ -333,6 +337,7 @@ export function wingStrikes(car, obstacles, world) {
       }
       car.impact = Math.max(car.impact, heavy ? .3 : .18);
       car.airspeed = Math.hypot(car.vx, car.vy, car.vz); car.wingStrikes = (car.wingStrikes || 0) + 1; strikes++;
+      car.lastStrike = { x: px, z: pz, heavy: heavy && !broke }; // where it hit, for the sound
       break; // one strike per wing per step; the attitude has changed
     }
   }

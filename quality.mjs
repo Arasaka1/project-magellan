@@ -2,15 +2,16 @@
 // level selection is unit-tested independently of real frame timing.
 export const QUALITY_PRESETS = ['auto', 'low', 'medium', 'high'];
 
-// Phones have small CSS viewports, so High may use a denser 2× buffer there and
+// farShadow is the wide second sun shadow map (0 turns it off); see
+// shadow-fade.mjs. Phones have small CSS viewports, so High may use a denser 2× buffer there and
 // still draw fewer pixels than the 1.7× desktop cap on a larger window.
 export function qualityLevels(coarse) {
   const high = coarse ? 2 : 1.7;
   return [
-    { name: 'low', pixelRatio: 1, shadow: 512, grass: { density: .3, range: 36, fade: 16 } },
-    { name: 'medium', pixelRatio: 1.35, shadow: 1024, grass: { density: .5, range: 48, fade: 22 } },
-    { name: 'medium+', pixelRatio: (1.35 + high) / 2, shadow: 2048, grass: { density: .75, range: 62, fade: 30 } },
-    { name: 'high', pixelRatio: high, shadow: 2048, grass: { density: 1, range: 78, fade: 38 } },
+    { name: 'low', pixelRatio: 1, shadow: 512, farShadow: 0, grass: { density: .3, range: 36, fade: 16 } },
+    { name: 'medium', pixelRatio: 1.35, shadow: 1024, farShadow: 1024, grass: { density: .5, range: 48, fade: 22 } },
+    { name: 'medium+', pixelRatio: (1.35 + high) / 2, shadow: 2048, farShadow: 1024, grass: { density: .75, range: 62, fade: 30 } },
+    { name: 'high', pixelRatio: high, shadow: 2048, farShadow: 2048, grass: { density: 1, range: 78, fade: 38 } },
   ];
 }
 export const presetLevel = preset => ({ low: 0, medium: 1, high: 3 })[preset];

@@ -1,8 +1,8 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=physics-9';
-import { stepAmphibious } from './amphibious-motion.mjs?v=physics-9';
+import { createLakes, lakeRadius } from './lakes.mjs?v=physics-10';
+import { stepAmphibious } from './amphibious-motion.mjs?v=physics-10';
 import { controlAxis } from './controls.mjs?v=slider-1';
-import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-9';
+import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-10';
 export const CHUNK = 96;
 export const GRID = 4;
 export const ROAD_SPACING = 420;

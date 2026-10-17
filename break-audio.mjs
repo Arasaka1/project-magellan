@@ -22,21 +22,25 @@ export function synthesizeBreak(type, sampleRate = 44100) {
   return samples;
 }
 
-export function createBreakAudio(context, output, capacity = 8) {
+// `send` (optional) is an echo input; `pan` places the break left or right.
+export function createBreakAudio(context, output, capacity = 8, send = null) {
   const buffers = new Map(), voices = new Set();
   let played = 0;
   for (const type of ['tree', 'cactus', 'rock', 'boulder']) {
     const data = synthesizeBreak(type, context.sampleRate), buffer = context.createBuffer(1, data.length, context.sampleRate);
     buffer.copyToChannel(data, 0); buffers.set(type, buffer);
   }
-  function play(type, speed) {
+  function play(type, speed, pan = 0) {
     if (!buffers.has(type)) return;
     if (voices.size >= capacity) voices.values().next().value.stop();
-    const source = context.createBufferSource(), gain = context.createGain();
-    source.buffer = buffers.get(type); gain.gain.value = Math.min(.42, .18 + speed * .003);
-    source.connect(gain).connect(output);
-    const voice = { stop() { source.stop(); source.disconnect(); gain.disconnect(); voices.delete(voice); } };
-    source.onended = () => { source.disconnect(); gain.disconnect(); voices.delete(voice); };
+    const source = context.createBufferSource(), gain = context.createGain(), panner = context.createStereoPanner(), wet = context.createGain();
+    source.buffer = buffers.get(type); gain.gain.value = Math.min(.2, .08 + speed * .0015);
+    panner.pan.value = Math.min(1, Math.max(-1, pan)); wet.gain.value = .3;
+    source.connect(gain).connect(panner).connect(output);
+    if (send) panner.connect(wet).connect(send);
+    const release = () => { source.disconnect(); gain.disconnect(); panner.disconnect(); wet.disconnect(); voices.delete(voice); };
+    const voice = { stop() { source.stop(); release(); } };
+    source.onended = release;
     voices.add(voice); source.start(); played++;
   }
   return { play, clear() { for (const voice of [...voices]) voice.stop(); }, get played() { return played; }, get active() { return voices.size; } };
