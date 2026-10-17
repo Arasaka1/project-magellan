@@ -5,7 +5,10 @@ import { hash } from './world.mjs?v=physics-16';
 // instanced draw of camera-facing puffs; they fade near the camera (no hard
 // clipping while flying through) and into the fog at distance.
 export const CLOUD_CELL = 520;
-const RANGE = 2, PUFFS = 7;
+// Cells of puffs exist out to RANGE cells from the camera's cell, so a new row
+// of cells appears at least RANGE cells (1,560 m) away; every puff fades in
+// with distance and is still fully transparent there, so none pops in.
+const RANGE = 3, PUFFS = 7, FADE_FAR = RANGE * CLOUD_CELL - 120, FADE_NEAR = FADE_FAR - 520;
 
 function puffTexture() {
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
@@ -41,7 +44,8 @@ export function createClouds(scene, seed) {
         vUv = uv;
         vec4 mvPosition = viewMatrix * vec4(offset, 1.0);
         mvPosition.xy += position.xy * size;
-        vAlpha = alpha * smoothstep(18.0, 75.0, length(mvPosition.xyz));
+        float across = length(offset.xz - cameraPosition.xz);
+        vAlpha = alpha * smoothstep(18.0, 75.0, length(mvPosition.xyz)) * (1.0 - smoothstep(${FADE_NEAR.toFixed(1)}, ${FADE_FAR.toFixed(1)}, across));
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
       }`,

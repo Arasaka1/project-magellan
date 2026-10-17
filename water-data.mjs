@@ -52,10 +52,13 @@ export function buildDistantWater(world, terrain, x, z) {
       const shape = 1 / lakeRadius(lake, lake.x + ux * lake.rx, lake.z + uz * lake.rz);
       vertex(lake.x + ux * lake.rx * r * shape, lake.z + uz * lake.rz * r * shape, ux * r, uz * r);
     }
-    for (let i = 0; i < RIM; i++) index.push(base, base + 1 + (i + 1) % RIM, base + 1 + i);
+    // Counter-clockwise seen from above, so the triangles face up: the water
+    // material draws front faces only, and from the air every distant lake
+    // was culled until its detailed patch replaced it about 1 km away.
+    for (let i = 0; i < RIM; i++) index.push(base, base + 1 + i, base + 1 + (i + 1) % RIM);
     for (let k = 0; k < RINGS.length - 1; k++) for (let i = 0; i < RIM; i++) {
       const a = base + 1 + k * RIM + i, b = base + 1 + k * RIM + (i + 1) % RIM, c = a + RIM, d = b + RIM;
-      index.push(a, b, d, a, d, c);
+      index.push(a, d, b, a, c, d);
     }
     ranges.push({ id: lake.id, start, count: index.length - start });
   }

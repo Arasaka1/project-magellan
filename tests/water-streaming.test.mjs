@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Scene } from 'three';
 import { createWorld } from '../world.mjs';
+import { createTerrain } from '../terrain.mjs';
 import { createWater } from '../water.mjs';
-import { buildWaterData } from '../water-data.mjs';
+import { buildWaterData, buildDistantWater } from '../water-data.mjs';
 import { farCoverage, farIndices } from '../streaming-layout.mjs';
 
 test('requesting and installing lakes never samples terrain on the main thread', () => {
@@ -82,5 +83,15 @@ test('coarse coverage masks detect arrivals, removals and negative tiles with ju
       const absent = 16 - mask.toString(2).replaceAll('0', '').length;
       assert.equal(farIndices(tx, tz, hasFine).length, absent * 16 * 6);
     }
+  }
+});
+
+test('distant water faces up, so lakes beyond the detailed patches are drawn from the air', () => {
+  const world = createWorld(3), terrain = createTerrain(world), data = buildDistantWater(world, terrain, 0, 500);
+  assert.ok(data.ranges.length > 10 && data.index.length > 0);
+  for (let i = 0; i < data.index.length; i += 3) {
+    const [a, b, c] = data.index.slice(i, i + 3);
+    const ax = data.position[a * 3], az = data.position[a * 3 + 2], bx = data.position[b * 3], bz = data.position[b * 3 + 2], cx = data.position[c * 3], cz = data.position[c * 3 + 2];
+    assert.ok((bz - az) * (cx - ax) - (bx - ax) * (cz - az) > 0, 'upward facing');
   }
 });

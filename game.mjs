@@ -16,7 +16,7 @@ import { createPerfMeter } from './perf-meter.mjs?v=perf-1';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=grass-6';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
 import { toggleFlight, flightAxes, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-16';
-import { createClouds } from './clouds.mjs?v=weather-5';
+import { createClouds } from './clouds.mjs?v=clouds-2';
 import { weatherAt } from './weather.mjs?v=weather-5';
 import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=snow-1';
 import * as THREE from 'three';
@@ -633,7 +633,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=grass-3', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=water-up-1', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {

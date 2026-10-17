@@ -77,7 +77,7 @@ Touch devices and compact windows show a **steering slider** in the lower left, 
 - `quality.mjs`: Low/Medium/High levels and the Auto frame-time controller.
 - `perf-meter.mjs`: the optional FPS and frame-time overlay.
 - `flight-motion.mjs`: deterministic fixed-step taxi, take-off, banked flight, stall, ceiling and landing for the plane form.
-- `clouds.mjs`: one instanced draw of seeded, camera-facing cloud puffs at flying height, greyed in rain.
+- `clouds.mjs`: one instanced draw of seeded, camera-facing cloud puffs at flying height, greyed in rain. Puffs exist within three 520 m cells of the camera and fade in with distance (fully transparent by 1,440 m, before any new cell can appear), so none pops in.
 - `weather.mjs` / `weather-effects.mjs`: per-region weather odds and seeded rolls (pure, unit-tested); rain and snow particles and the tone-mapped overcast fog colour.
 - `controls.mjs`: steering slider response curve and analog axes shared by the car and boat physics.
 - `shadow-fade.mjs`: fades directional shadows inside the moving shadow-map boundary, preserving nearby contrast at every graphics level's map resolution, and blends the sharp near map into the wide far map.
