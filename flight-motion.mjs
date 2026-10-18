@@ -41,10 +41,11 @@ export function toggleFlight(car) { car.flightMode = !car.flightMode; return car
 export function flightAxes(input) {
   // Simple controls: the driving keys (W/↑ throttle, Space/Shift climb and
   // dive, A/D or ←/→ turn), also for the take-off run.
-  if (input.simpleFlight) return { throttle: controlAxis(input.throttle, input.up, input.down), pitch: Number(!!input.jump) - Number(!!input.brake), roll: controlAxis(input.steer, input.left, input.right), yaw: 0 };
+  if (input.simpleFlight) return { throttle: controlAxis(input.throttle, input.up, input.down), pitch: controlAxis(input.pitchAxis, input.jump, input.brake), roll: controlAxis(input.steer, input.left, input.right), yaw: 0 };
   return {
     throttle: controlAxis(input.throttle, input.throttleUp ?? input.up, input.throttleDown ?? input.down),
-    pitch: Number(!!(input.pitchUp ?? input.jump)) - Number(!!(input.pitchDown ?? input.brake)), // + nose up
+    // + nose up. pitchAxis is the touch ring's analog pitch (up climbs).
+    pitch: controlAxis(input.pitchAxis, input.pitchUp ?? input.jump, input.pitchDown ?? input.brake),
     roll: controlAxis(input.steer, input.rollLeft ?? input.left, input.rollRight ?? input.right), // + left wing down
     yaw: Number(!!input.yawLeft) - Number(!!input.yawRight), // + nose left
   };
@@ -91,7 +92,7 @@ const SIMPLE_BANK = .75, SIMPLE_CLIMB = .45, SIMPLE_TURN = .5; // radians, radia
 function simpleAxes(car, input, world, dt) {
   const q = [car.qx, car.qy, car.qz, car.qw], mast = rotate(q, [0, 1, 0]), wing = rotate(q, [1, 0, 0]);
   const speed = car.airspeed || 1, bank = Math.atan2(wing[1], mast[1]); // + right wing down
-  const turn = controlAxis(input.steer, input.left, input.right), climb = Number(!!input.jump) - Number(!!input.brake);
+  const turn = controlAxis(input.steer, input.left, input.right), climb = controlAxis(input.pitchAxis, input.jump, input.brake);
   // Hands off right after a take-off, it still climbs out to a safe height.
   if (climb) car.climbOut = false;
   const height = car.y - world.surface(car.x, car.z);
@@ -222,7 +223,7 @@ function fly(car, input, world, dt, groundAt) {
   const simple = Boolean(input.simpleFlight);
   if (!simple) car.assistPath = null;
   const { throttle, pitch, roll, yaw, turn: arcadeTurn = 0 } = simple ? simpleAxes(car, input, world, dt) : flightAxes(input);
-  car.pushingDown = simple ? !!input.brake : pitch < 0; // the pilot, not the simple controls' own trim
+  car.pushingDown = (simple ? controlAxis(input.pitchAxis, input.jump, input.brake) : pitch) < -.25; // the pilot, not the simple controls' own trim
   const wings = car.flight, oldX = car.x, oldZ = car.z;
   const below = groundAt(world, car.x, car.z, car.heading).y;
   let q = [car.qx, car.qy, car.qz, car.qw];

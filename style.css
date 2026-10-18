@@ -553,10 +553,11 @@ body.driving .in-game {
   display:none;
   position:fixed;
   bottom:max(18px,env(safe-area-inset-bottom));
-  left:16px;
-  right:16px;
+  left:max(16px,env(safe-area-inset-left));
+  right:max(16px,env(safe-area-inset-right));
   z-index:6;
   justify-content:space-between;
+  align-items:flex-end; /* the taller flight ring must not lift the other controls */
   pointer-events:none;
 }
 
@@ -584,10 +585,15 @@ body.driving .in-game {
   color:var(--ink);
 }
 
-#touch .touch-center button {
-  font-size:9px;
-  width:48px;
-}
+/* Left: Jump and Drift side by side right above the steering slider (the
+   flight ring in the air). Right: FLY just left of the brake, with SIMPLE
+   above it in the air. Everything sits on the bottom edge. */
+#touch .touch-left { flex-direction:column; align-items:stretch; }
+#touch .touch-actions { display:flex; gap:8px; }
+#touch .touch-actions button { flex:1; width:auto; height:46px; font-size:9px; letter-spacing:.08em; }
+#touch .touch-right { align-items:flex-end; }
+#touch .touch-flight { display:flex; flex-direction:column; gap:6px; }
+#touch .touch-steer { display:flex; align-items:center; gap:8px; } /* the slider, or the ring with SIMPLE to its right */
 
 body.touch.driving #touch {
   display:flex;
@@ -826,9 +832,6 @@ body.touch .menu-controls {
   .menu-controls {
     display:none;
   }
-  .touch-center {
-    gap:5px!important;
-  }
   #touch {
     left:12px;
     right:12px;
@@ -840,9 +843,8 @@ body.touch .menu-controls {
     width:52px;
     height:56px;
   }
-  #touch .touch-center button {
-    width:43px;
-  }
+  #touch .touch-actions button { height:44px; }
+  #touch .touch-flight, #touch .touch-steer { gap:5px; }
   #dashboard {
     width:166px;
   }
@@ -890,6 +892,18 @@ header,#compass {
 #touch button:disabled { opacity: .35; }
 @media (max-width: 800px) { #rampHint { top: 109px; } #lakeHint { top: 143px; } }
 @media (max-height: 600px) { #rampHint { top: 60px; } #lakeHint { top: 94px; } }
+/* Phones in landscape: the ramp marker sits on the left under the logo and
+   the lake marker on the right under the sound and pause buttons, clearing
+   the middle of the view. */
+@media (orientation: landscape) and (max-height: 600px) {
+  #rampHint { top: 66px; left: max(40px, env(safe-area-inset-left)); right: auto; transform: none; }
+  #lakeHint { top: 66px; left: auto; right: max(40px, env(safe-area-inset-right)); transform: none; }
+}
+/* (Narrower windows pull the header in to 24 px; the markers follow it.) */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 800px) {
+  #rampHint { left: 24px; }
+  #lakeHint { right: 24px; }
+}
 
 /* Graphics and touch steering preferences, on the start and pause menus. */
 #settingsRow {
@@ -965,23 +979,20 @@ body.touch p.touch-only { display:block!important; }
   #settingsRow { margin-top:10px; }
 }
 
-/* FLY sits above Jump and Drift and toggles the plane form. */
-#touch .touch-center { display:grid; grid-template-columns:auto auto; }
-#touch .touch-center .fly-button {
-  grid-column:1 / span 2;
-  width:auto!important;
-  height:30px;
-  border-radius:9px;
+/* FLY (LAND in the air) toggles the plane form. */
+#touch .touch-flight .fly-button {
+  width:52px;
   font-size:9px;
-  letter-spacing:.14em;
+  letter-spacing:.12em;
   color:var(--yellow);
   border-color:rgba(233,201,138,.45);
 }
 body.touch #dashboard { bottom:118px; }
-body.touch #mapPanel { bottom:113px; }
+/* Phones have no minimap: the screen is the map, and the controls need the room. */
+body.touch #mapPanel { display:none; }
 @media(max-width:700px) {
-  #dashboard,body.touch #dashboard,#mapPanel,body.touch #mapPanel { bottom:118px; }
-  #touch .touch-center .fly-button { height:28px; }
+  #dashboard,body.touch #dashboard,#mapPanel { bottom:118px; }
+  #touch .touch-flight .fly-button { width:48px; }
 }
 @media(max-height:600px) {
   body.touch #dashboard { bottom:104px; }
@@ -1006,21 +1017,19 @@ body.plane-mode #driveHint, body.touch #flightHint { display:none!important; }
 @media(max-width:800px) { #flightHint { bottom:25px; font-size:9px; gap:12px; } }
 @media(max-width:700px) { #flightHint { display:none!important; } }
 
-/* In the air LAND and SIMPLE (easy flight controls) share the top row. */
-#touch .touch-center .simple-button {
+/* In the air SIMPLE (easy flight controls) sits just right of the ring. */
+#touch .simple-button {
   display:none;
-  width:auto!important;
-  height:30px;
-  border-radius:9px;
+  width:auto;
+  align-self:flex-end; /* the same height as LAND (all touch buttons), on the same bottom edge */
+  padding:0 8px;
   font-size:9px;
   letter-spacing:.14em;
   color:var(--yellow);
   border-color:rgba(233,201,138,.45);
 }
-#touch .touch-center .simple-button.active { color:var(--ink); }
-body.plane-mode #touch .touch-center .simple-button { display:block; }
-body.plane-mode #touch .touch-center .fly-button { grid-column:auto; }
-@media(max-width:700px) { #touch .touch-center .simple-button { height:28px; } }
+#touch .simple-button.active { color:var(--ink); }
+body.plane-mode #touch .simple-button { display:block; }
 @media(max-width:1100px) { #flightHint { gap:11px; font-size:9px; left:calc(50% - 40px); } #flightHint kbd { margin-right:4px; } }
 #flightHint .simple-only, #flightHint.simple .full-only { display:none; }
 #flightHint.simple .simple-only { display:inline; }
@@ -1035,3 +1044,61 @@ body.plane-mode #touch .touch-center .fly-button { grid-column:auto; }
 #perfMeter pre { margin:0 0 6px; font:inherit; white-space:pre; }
 #perfMeter canvas { display:block; width:160px; height:37px; border-radius:4px; }
 @media(max-width:700px) { #perfMeter { top:182px; left:12px; font-size:9px; } #perfMeter canvas { width:130px; height:30px; } } /* below the centred direction pills */
+
+/* In the air the steering slider becomes a ring in the same spot: drag the
+   knob up to climb, down to dive, sideways to roll (or turn, on simple
+   controls). The ring stays put; the knob stops at its edge. Jump and Drift
+   (Climb and Dive in the air) are hidden there: the ring does their job. */
+#touch .flight-ring {
+  display:none;
+  pointer-events:auto;
+  position:relative;
+  width:116px;
+  height:116px;
+  border-radius:50%;
+  border:1px solid var(--line);
+  background:radial-gradient(circle, transparent 34%, rgba(245,241,223,.08) 35%, transparent 36%), rgba(25,44,36,.5);
+  backdrop-filter:blur(8px);
+  place-items:center;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.flight-ring::before, .flight-ring::after { content:''; position:absolute; background:var(--line); pointer-events:none; }
+.flight-ring::before { left:14px; right:14px; top:50%; height:1px; }
+.flight-ring::after { top:14px; bottom:14px; left:50%; width:1px; }
+.flight-ring b { position:absolute; left:50%; transform:translateX(-50%); font-size:9px; color:var(--faint); pointer-events:none; }
+.flight-ring b:first-of-type { top:5px; }
+.flight-ring b:last-of-type { bottom:5px; }
+.flight-ring i {
+  position:relative; z-index:1;
+  width:40px; height:40px; border-radius:50%;
+  background:rgba(245,241,223,.8);
+  box-shadow:0 2px 10px rgba(20,35,30,.35);
+  pointer-events:none;
+}
+.flight-ring.active i { background:var(--yellow); }
+body.plane-mode #touch .flight-ring { display:grid; }
+body.plane-mode #touch .steer-slider { display:none; }
+body.plane-mode #touch [data-control="jump"], body.plane-mode #touch [data-control="brake"] { display:none; }
+@media(max-width:700px) { #touch .flight-ring { width:104px; height:104px; } }
+
+/* The narrowest phones (320–360 px): tighten the touch bar so the ring,
+   SIMPLE, LAND and both pedals all fit across. */
+@media(max-width:360px) {
+  #touch { left:max(10px,env(safe-area-inset-left)); right:max(10px,env(safe-area-inset-right)); }
+  #touch>div, #touch .touch-flight, #touch .touch-steer, #touch .touch-actions { gap:4px; }
+  #touch button { width:46px; height:52px; }
+  #touch .touch-flight .fly-button { width:44px; }
+  #touch .simple-button { padding:0 4px; letter-spacing:.06em; }
+  #touch .flight-ring { width:88px; height:88px; }
+  #touch .steer-slider { width:100px; height:52px; }
+  #touch .touch-actions button { height:42px; }
+}
+
+/* Phones in landscape: messages sit low, in the gap between the left and
+   right controls, clear of the car; long ones wrap rather than run under
+   the buttons. */
+@media (orientation: landscape) and (max-height: 600px) {
+  body.touch #toast { bottom:max(24px,env(safe-area-inset-bottom)); max-width:calc(100% - 440px); white-space:normal; text-align:center; line-height:1.45; padding:10px 16px; }
+}

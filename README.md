@@ -90,7 +90,10 @@ On phones and compact windows:
 
 - **Steering slider** (lower left): slide to steer. The track stays put, and the knob stops at either end however far your finger travels.
 - **↑ / ↓**: accelerate, and brake then reverse.
-- **Jump** and **Drift** sit in the middle, with **FLY**, which becomes **LAND** and **SIMPLE** in the air (where Jump and Drift become **CLIMB** and **DIVE**).
+- **Jump** and **Drift** sit side by side just above the slider. **FLY** is just left of the brake; in the air it becomes **LAND**, with **SIMPLE** above it.
+- **Flight ring:** in the air the steering slider becomes a ring in the same spot. Drag the knob up to climb, down to dive, and sideways to roll (or turn, on simple controls). The ring stays put, the knob stops at its edge and re-centres when you let go, and ↑ / ↓ are the throttle.
+- **No minimap** on phones, so the controls have room (the HUD still points to the nearest ramp and lake).
+- **Fullscreen:** in landscape the game goes fullscreen on your next tap, and leaves it when you turn back to portrait. Safari on iPhone doesn't allow fullscreen for web pages, so on iPhone use Share → **Add to Home Screen**: the game then opens fullscreen like an app.
 - **Steering sensitivity** (50–150%) is in the menu. It changes how quickly small slider movements turn; full deflection is always full lock.
 
 The game pauses when the window loses focus. Sound starts muted on your first visit; trip records and settings are saved in your browser.

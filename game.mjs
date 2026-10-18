@@ -100,7 +100,7 @@ qualityLevel = startQuality();
 const keyMap = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'jump', ShiftLeft: 'brake', ShiftRight: 'brake', KeyQ: 'yawLeft', KeyE: 'yawRight' };
 // In the air the same keys fly on three axes. W/S throttle; ↑/↓ pitch like a
 // flight stick (↓ pulls the nose up), with Space/Shift as climb/dive; A/D or
-// ←/→ roll; Q/E yaw. Touch: ↑↓ throttle, CLIMB/DIVE pitch, slider roll.
+// ←/→ roll; Q/E yaw. Touch: ↑↓ throttle, the flight ring pitches and rolls.
 const flightKeys = {
   throttleUp: ['KeyW'], throttleDown: ['KeyS'], pitchUp: ['Space', 'ArrowDown'], pitchDown: ['ShiftLeft', 'ShiftRight', 'ArrowUp'],
   rollLeft: ['KeyA', 'ArrowLeft'], rollRight: ['KeyD', 'ArrowRight'], yawLeft: ['KeyQ'], yawRight: ['KeyE'],
@@ -885,14 +885,16 @@ $('soundBtn').onclick = toggleSound;
 function saveRecord() { bestDistance = Math.max(bestDistance, vehicle.distance); if (!testMode) try { localStorage.setItem('endless-drive-records', JSON.stringify({ distance: bestDistance })); } catch {} }
 let toastTimer;
 function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600); }
-function clearInput() { releaseSlider(false); keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
+function clearInput() { releaseSlider(false); releaseRing(false); keyStates.clear(); touchStates.clear(); for (const k in input) input[k] = false; document.querySelectorAll('[data-control]').forEach(el => el.classList.remove('active')); }
 function syncInput() {
   for (const k of ['up', 'down', 'left', 'right', 'jump', 'brake']) input[k] = [...keyStates].some(code => keyMap[code] === k) || [...touchStates.values()].includes(k);
   const touches = [...touchStates.values()];
   for (const [axis, codes] of Object.entries(flightKeys)) input[axis] = codes.some(code => keyStates.has(code)) || touches.includes(flightTouch[axis]);
   input.simpleFlight = simpleFlight;
   // Analog axes add to the digital keys; physics clamps the combined value.
-  input.steer = slider.pointer === null ? undefined : steerAxis(slider.value, settings.sensitivity);
+  // In the air the ring steers (x) and pitches (y, up climbs); otherwise the slider steers.
+  input.steer = ring.pointer !== null ? steerAxis(ring.x, settings.sensitivity) : slider.pointer === null ? undefined : steerAxis(slider.value, settings.sensitivity);
+  input.pitchAxis = ring.pointer === null ? undefined : steerAxis(ring.y, settings.sensitivity);
 }
 const throttleInput = () => controlAxis(input.throttle, input.up, input.down);
 function resume() {
@@ -963,8 +965,8 @@ $('timeBtn').onclick = () => setTimeOfDay((timePreset + 1) % TIME_PRESETS.length
 // (bank to turn, climb/dive, levels itself when released) for this visit.
 function toggleFlightControls() {
   simpleFlight = !simpleFlight; syncInput();
-  toast(simpleFlight ? coarse ? 'Simple flight · slider turns · CLIMB / DIVE · ↑↓ throttle' : 'Simple flight · A/D turn · Space/Shift climb and dive · W/S throttle'
-    : coarse ? 'Full flight · slider rolls · CLIMB / DIVE pitch · ↑↓ throttle' : 'Full flight · ↑/↓ pitch · A/D roll · Q/E yaw · W/S throttle');
+  toast(simpleFlight ? coarse ? 'Simple flight · ring: sideways turns, up climbs, down dives · ↑↓ throttle' : 'Simple flight · A/D turn · Space/Shift climb and dive · W/S throttle'
+    : coarse ? 'Full flight · ring: sideways rolls, up climbs, down dives · ↑↓ throttle' : 'Full flight · ↑/↓ pitch · A/D roll · Q/E yaw · W/S throttle');
   updateHUD();
 }
 $('simpleBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (running) toggleFlightControls(); });
@@ -1085,6 +1087,46 @@ slider.el.addEventListener('pointerdown', e => {
 });
 slider.el.addEventListener('pointermove', e => { if (e.pointerId === slider.pointer) moveSlider(e); });
 for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) slider.el.addEventListener(type, e => { if (e.pointerId === slider.pointer) releaseSlider(); });
+// The flight ring replaces the slider in the air. Its base is fixed: the knob
+// follows the finger inside the ring and stops at its edge.
+const ring = { el: $('flightRing'), pointer: null, x: 0, y: 0 };
+function releaseRing(sync = true) {
+  if (ring.pointer === null) return;
+  ring.pointer = null; ring.x = ring.y = 0;
+  ring.el.classList.remove('active'); ring.el.querySelector('i').style.transform = ''; ring.el.setAttribute('aria-valuenow', '0');
+  if (sync) syncInput();
+}
+function moveRing(e) {
+  const box = ring.el.getBoundingClientRect(), reach = (box.width - ring.el.querySelector('i').offsetWidth) / 2;
+  let x = (e.clientX - (box.left + box.width / 2)) / reach, y = (e.clientY - (box.top + box.height / 2)) / reach;
+  const length = Math.hypot(x, y); if (length > 1) { x /= length; y /= length; }
+  ring.x = x; ring.y = y;
+  ring.el.querySelector('i').style.transform = `translate(${x * reach}px, ${y * reach}px)`;
+  ring.el.setAttribute('aria-valuenow', String(Math.round(-y * 100)));
+  syncInput();
+}
+ring.el.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (!running || ring.pointer !== null) return;
+  ring.el.setPointerCapture(e.pointerId); ring.pointer = e.pointerId;
+  ring.el.classList.add('active'); moveRing(e);
+});
+ring.el.addEventListener('pointermove', e => { if (e.pointerId === ring.pointer) moveRing(e); });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) ring.el.addEventListener(type, e => { if (e.pointerId === ring.pointer) releaseRing(); });
+
+// Phones in landscape play fullscreen. Browsers only allow it from a tap, so
+// the next tap (on anything) asks for it; turning back to portrait leaves it.
+// (iPhone Safari has no page fullscreen: added to the home screen, the game
+// opens fullscreen instead.)
+const landscape = matchMedia('(orientation: landscape)');
+const fullscreenElement = () => document.fullscreenElement ?? document.webkitFullscreenElement;
+function enterFullscreen() {
+  if (!coarse || !landscape.matches || fullscreenElement() || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return;
+  const root = document.documentElement, request = root.requestFullscreen ? root.requestFullscreen({ navigationUI: 'hide' }) : root.webkitRequestFullscreen?.();
+  request?.catch?.(() => {});
+}
+addEventListener('pointerdown', enterFullscreen, { capture: true });
+landscape.addEventListener('change', () => { if (!landscape.matches && fullscreenElement()) (document.exitFullscreen ?? document.webkitExitFullscreen)?.call(document)?.catch?.(() => {}); });
 
 const mapContext = $('minimap').getContext('2d');
 function drawMap() {
@@ -1142,10 +1184,11 @@ function updateHUD() {
   $('flyAction').textContent = planeMode ? 'land' : 'fly';
   const touchJump = document.querySelector('[data-control="jump"]');
   touchJump.disabled = vehicle.floating && !planeMode;
-  touchJump.textContent = planeMode ? 'CLIMB' : 'JUMP'; touchJump.setAttribute('aria-label', planeMode ? 'Climb' : 'Jump');
+  touchJump.textContent = 'JUMP'; touchJump.setAttribute('aria-label', 'Jump'); // hidden in the air: the ring pitches
+  if (!planeMode) releaseRing();
   const touchBrake = document.querySelector('[data-control="brake"]');
-  touchBrake.textContent = planeMode ? 'DIVE' : vehicle.floating ? 'SLOW' : 'DRIFT';
-  touchBrake.setAttribute('aria-label', planeMode ? 'Dive' : vehicle.floating ? 'Slow boat' : 'Drift');
+  touchBrake.textContent = vehicle.floating ? 'SLOW' : 'DRIFT';
+  touchBrake.setAttribute('aria-label', vehicle.floating ? 'Slow boat' : 'Drift');
   document.body.classList.toggle('plane-mode', planeMode);
   $('flyBtn').textContent = planeMode ? 'LAND' : 'FLY'; $('flyBtn').setAttribute('aria-label', planeMode ? 'Land' : 'Fly');
   const simple = simpleFlight;
@@ -1316,7 +1359,7 @@ function frame(now) {
     }
     if (vehicle.flying !== reportedFlying) {
       reportedFlying = vehicle.flying;
-      toast(reportedFlying ? coarse ? 'Airborne · CLIMB and DIVE pitch · SIMPLE for easy controls · LAND folds the wings' : 'Airborne · Space climbs · Shift dives · T simple controls · F lands'
+      toast(reportedFlying ? coarse ? 'Airborne · drag the ring to climb, dive and roll · SIMPLE for easy controls · LAND folds the wings' : 'Airborne · Space climbs · Shift dives · T simple controls · F lands'
         : vehicle.floating ? 'Splashdown — back to boat' : 'Touchdown');
     }
     if (vehicle.landings > reportedLanding) {
@@ -1325,7 +1368,7 @@ function frame(now) {
     }
     streamWorld(); uiTime += dt; mapTime += dt;
     if (uiTime > .12) { uiTime = 0; updateHUD(); }
-    if (mapTime > (coarse ? .6 : .3)) { mapTime = 0; drawMap(); }
+    if (!coarse && mapTime > .3) { mapTime = 0; drawMap(); } // phones have no minimap
   }
   render(running ? dt : 0);
   const frameCPU = performance.now() - frameStarted;

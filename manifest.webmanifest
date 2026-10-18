@@ -1,0 +1,15 @@
+{
+  "name": "Endless Drive",
+  "short_name": "Endless Drive",
+  "description": "An endless driving, sailing and flying escape through a new procedural world on every visit.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#253d39",
+  "theme_color": "#253d39",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

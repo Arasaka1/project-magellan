@@ -275,14 +275,17 @@ test('graphics presets cycle, and the steering slider replaces the arrow buttons
   await page.locator('#qualityBtn').tap();
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Auto · Medium');
   await page.getByRole('button', { name: 'Start exploring', exact: true }).tap();
-  // The original layout: speed arrows on the right, Jump and Drift in the
-  // middle, and the steering slider where the ← → buttons were.
+  // Speed arrows on the right with FLY beside the brake; Jump and Drift
+  // just above the steering slider, which sits where the ← → buttons were.
   for (const name of ['Accelerate', 'Brake or reverse', 'Jump', 'Drift']) await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Steer left' })).toHaveCount(0);
   const slider = page.getByRole('slider', { name: 'Steering: slide left or right' });
   await expect(slider).toBeVisible();
   const track = await slider.boundingBox(), pedal = await page.getByRole('button', { name: 'Accelerate', exact: true }).boundingBox();
   expect(track.x).toBeLessThan(40); expect(track.y + track.height).toBeGreaterThan(780);
+  const jumpBox = await page.getByRole('button', { name: 'Jump', exact: true }).boundingBox(), flyBox = await page.getByRole('button', { name: 'Fly', exact: true }).boundingBox(), brakeBox = await page.getByRole('button', { name: 'Brake or reverse', exact: true }).boundingBox();
+  expect(jumpBox.y + jumpBox.height).toBeLessThanOrEqual(track.y + 1); expect(jumpBox.x).toBeLessThan(track.x + track.width); // above the slider
+  expect(flyBox.x + flyBox.width).toBeLessThanOrEqual(brakeBox.x + 1); expect(Math.abs(flyBox.y + flyBox.height - brakeBox.y - brakeBox.height)).toBeLessThan(2); // left of the brake
   const steer = { x: track.x + track.width / 2, y: track.y + track.height / 2 }, gas = { x: pedal.x + pedal.width / 2, y: pedal.y + pedal.height / 2 };
   // Two real touch points: one thumb holds Accelerate, the other slides.
   const cdp = await page.context().newCDPSession(page);
@@ -304,13 +307,17 @@ test('graphics presets cycle, and the steering slider replaces the arrow buttons
   await touch('touchEnd', []);
   await expect.poll(async () => (await snapshot(page)).controls.steer).toBe(null);
   expect((await snapshot(page)).controls.throttle).toBe(0);
-  // FLY switches to the plane form; Jump and Drift become Climb and Dive.
+  // FLY switches to the plane form: the slider becomes the flight ring, and
+  // Jump and Drift give way to it.
   await page.getByRole('button', { name: 'Fly', exact: true }).tap();
   await expect.poll(async () => (await snapshot(page)).flight.mode).toBe(true);
-  await expect(page.getByRole('button', { name: 'Climb', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Dive', exact: true })).toBeVisible();
+  await expect(page.getByRole('slider', { name: /Flight control/ })).toBeVisible();
+  await expect(page.getByRole('slider', { name: 'Steering: slide left or right' })).toBeHidden();
+  for (const name of ['Jump', 'Drift']) await expect(page.getByRole('button', { name, exact: true })).toBeHidden();
   await page.getByRole('button', { name: 'Land', exact: true }).tap();
   await expect.poll(async () => (await snapshot(page)).flight.mode).toBe(false);
+  await expect(page.getByRole('slider', { name: 'Steering: slide left or right' })).toBeVisible();
+  await expect(page.getByRole('slider', { name: /Flight control/ })).toBeHidden();
   expect(errors).toEqual([]);
 });
 test('a second world request cancels old work and touch controls still jump', async ({ page }) => {
