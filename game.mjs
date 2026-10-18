@@ -1,5 +1,5 @@
 import { createTerrain } from './terrain.mjs?v=physics-16';
-import { createWater } from './water.mjs?v=weather-5';
+import { createWater } from './water.mjs?v=day-2';
 import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-16';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
@@ -16,12 +16,14 @@ import { createPerfMeter } from './perf-meter.mjs?v=perf-1';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=grass-6';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
 import { toggleFlight, flightAxes, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-16';
-import { createClouds } from './clouds.mjs?v=clouds-2';
-import { weatherAt } from './weather.mjs?v=weather-5';
-import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=snow-1';
+import { createClouds } from './clouds.mjs?v=clouds-3';
+import { weatherAt } from './weather.mjs?v=clouds-3';
+import { createSky } from './sky.mjs?v=clouds-8';
+import { daylight, advanceClock, clockLabel, startHour } from './daylight.mjs?v=day-3';
+import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=day-1';
 import * as THREE from 'three';
 import { CHUNK, GRID, ROAD_SPACING, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=physics-16';
-import { buildLandmark, cloneOwnedGeometry } from './scenery.mjs?v=physics-16';
+import { buildLandmark, cloneOwnedGeometry, buildLandmarkStandins, landmarkSwapDistance } from './scenery.mjs?v=standin-5';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -67,7 +69,7 @@ if (new URLSearchParams(location.search).get('test') === 'tree-smash') {
   const prop = world.props(-1, -1).find(p => p.type === 'tree');
   if (prop) vehicle = createVehicle(world, prop.x, prop.z - 32, 0);
 }
-let running = false, started = false, cameraMode = 0, muted = true, lightsOn = false, bestDistance = 0;
+let running = false, started = false, cameraMode = 0, muted = true, lightsOn = false, lightsChosen = false, bestDistance = 0;
 if (!testMode) try { muted = localStorage.getItem('endless-drive-muted') !== '0'; bestDistance = Number(JSON.parse(localStorage.getItem('endless-drive-records') || '{}').distance) || 0; } catch {}
 const input = {}, keyStates = new Set(), touchStates = new Map();
 // Graphics and touch preferences. Tests use fixed, device-appropriate settings
@@ -153,38 +155,28 @@ function setFarShadow(size) {
 }
 setFarShadow(levels[qualityLevel].farShadow);
 scene.add(farSun, farSun.target); // after the sun: it must be the second directional shadow
+// Toward the key light: the sun by day, the moon by night (set each frame).
 const sunDirection = new THREE.Vector3(-65, 100, 45).normalize();
 // Shadow maps move only in whole texels across the light's view, so the
 // shadow pattern never slides under the scene and edges don't crawl as the car
-// moves. The basis is the shadow camera's own (lookAt with +y up).
-const lightRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), sunDirection).normalize();
-const lightUp = new THREE.Vector3().crossVectors(sunDirection, lightRight);
+// moves. The basis is the shadow camera's own (lookAt with +y up); the light
+// turns slowly through the day, so it is rebuilt each time.
+const lightRight = new THREE.Vector3(), lightUp = new THREE.Vector3(), worldUp = new THREE.Vector3(0, 1, 0);
 function snapToTexels(target, span, size) {
+  lightRight.crossVectors(worldUp, sunDirection).normalize(); lightUp.crossVectors(sunDirection, lightRight);
   const texel = span / size, x = target.dot(lightRight), y = target.dot(lightUp);
   target.addScaledVector(lightRight, Math.round(x / texel) * texel - x).addScaledVector(lightUp, Math.round(y / texel) * texel - y);
 }
-// A softly graded sky travels with the camera; the horizon never runs out.
-const sky = new THREE.Mesh(new THREE.SphereGeometry(6000, 24, 16), new THREE.ShaderMaterial({
-  side: THREE.BackSide, depthWrite: false,
-  uniforms: { top: { value: new THREE.Color('#729eaf') }, bottom: { value: skyColor }, cover: { value: 0 }, cloudTone: { value: new THREE.Color('#dde5dd') } },
-  vertexShader: 'varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-  fragmentShader: `varying vec3 vDir; uniform vec3 top; uniform vec3 bottom; uniform vec3 cloudTone; uniform float cover;
-    float hashSky(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-    float noiseSky(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hashSky(i),hashSky(i+vec2(1,0)),f.x),mix(hashSky(i+vec2(0,1)),hashSky(i+vec2(1,1)),f.x),f.y);}
-    void main(){
-      vec3 ray=normalize(vDir);float t=pow(max(ray.y,0.0),.65);
-      vec2 p=ray.xz/max(ray.y,.05)*1.3;
-      float n=noiseSky(p)*.5+noiseSky(p*2.1)*.25+noiseSky(p*4.2)*.125;
-      // Bad weather (cover) spreads the clouds into an overcast and greys them.
-      float cloud=smoothstep(.48-cover*.4,.68-cover*.3,n)*smoothstep(.025,.14,ray.y)*(1.0-smoothstep(.7,.95,ray.y)*(1.0-cover))*(.62+cover*.3);
-      gl_FragColor=vec4(mix(mix(bottom,top,t),cloudTone,cloud),1.0);
-      #include <tonemapping_fragment>
-      #include <colorspace_fragment>
-    }`,
-}));
-// Shader chunks must start on their own line.
-sky.material.fragmentShader = sky.material.fragmentShader.replace(';#include', ';\n#include');
-scene.add(sky);
+// The sky dome follows the time of day (see sky.mjs and daylight.mjs) and
+// travels with the camera, so the horizon never runs out.
+const sky = createSky(scene);
+// Time of day, in hours. Each world starts at its own seeded time of day or
+// night (test modes at mid-morning, so their checks run in daylight);
+// ?time=18.5 starts at 18:30.
+const timeParam = Number(new URLSearchParams(location.search).get('time'));
+const fixedTime = testMode || new URLSearchParams(location.search).has('time');
+const worldHour = worldSeed => startHour(hash(17, 29, worldSeed + 5501));
+const clock = { hours: Number.isFinite(timeParam) && new URLSearchParams(location.search).has('time') ? ((timeParam % 24) + 24) % 24 : testMode ? 10 : worldHour(seed), seconds: 0 };
 // Cloud banks at flying height, seeded per world.
 const clouds = createClouds(scene, seed);
 
@@ -200,8 +192,10 @@ const SKY = {
   rain: { top: new THREE.Color('#7b858a'), bottom: new THREE.Color('#a3abad'), cloud: new THREE.Color('#8a9296') },
   snow: { top: new THREE.Color('#a4aeb3'), bottom: new THREE.Color('#c9cfd1'), cloud: new THREE.Color('#d2d7d9') },
 };
-const weather = { clock: 0, check: 0, target: { kind: 'clear', strength: 0, region: 'meadow' }, rain: 0, snow: 0, gust: new THREE.Vector3(), lastCamera: new THREE.Vector3(), cameraVelocity: new THREE.Vector3() };
+const weather = { clouds: .38, clock: 0, check: 0, target: { kind: 'clear', strength: 0, region: 'meadow' }, rain: 0, snow: 0, gust: new THREE.Vector3(), lastCamera: new THREE.Vector3(), cameraVelocity: new THREE.Vector3() };
 const weatherColor = new THREE.Color(), skyTop = new THREE.Color(), overcast = { top: new THREE.Color(), bottom: new THREE.Color(), cloud: new THREE.Color() };
+const keyTarget = new THREE.Vector3(), dayColor = new THREE.Color(), cloudTint = new THREE.Color(), surfaceLight = new THREE.Color(), skyPalette = { zenith: new THREE.Color(), horizon: new THREE.Color(), cloudLit: new THREE.Color(), cloudShade: new THREE.Color() };
+let dayLight = daylight(clock.hours);
 function updateWeather(dt) {
   const step = running ? dt : 0;
   weather.clock += step;
@@ -211,19 +205,42 @@ function updateWeather(dt) {
   const { kind, strength } = weather.target;
   weather.rain += ((kind === 'rain' ? strength : 0) - weather.rain) * ease;
   weather.snow += ((kind === 'snow' ? strength : 0) - weather.snow) * ease;
+  // Cloud cover leads the rain (it gathers ahead of it) and clears after.
+  weather.clouds += ((weather.target.cloudiness ?? .38) - weather.clouds) * (!started || forcedWeather ? 1 : 1 - Math.exp(-step / 7));
+  skyPalette.cloudiness = weather.clouds;
   const rain = smoothstep(0, .85, weather.rain), snow = smoothstep(0, .85, weather.snow), cover = Math.min(1, Math.max(rain, snow) + Math.min(rain, snow) * .5);
   // Sky, clouds and fog: blend toward an overcast mixed from rain's and
   // snow's in proportion to how much of each is falling, so crossing from one
   // to the other never switches the colours over in one frame.
   const snowShare = rain + snow > 0 ? snow / (rain + snow) : 0;
   for (const part of ['top', 'bottom', 'cloud']) overcast[part].copy(SKY.rain[part]).lerp(SKY.snow[part], snowShare);
-  skyColor.copy(SKY.clear.bottom).lerp(overcast.bottom, cover);
-  skyTop.copy(SKY.clear.top).lerp(overcast.top, cover); sky.material.uniforms.top.value.copy(skyTop);
-  sky.material.uniforms.cloudTone.value.copy(SKY.clear.cloud).lerp(overcast.cloud, cover); sky.material.uniforms.cover.value = cover;
+  // Time of day: the clear sky's colours, then the overcast dimmed to match
+  // (a grey day by daylight, near black at night, warmed at sunrise and sunset).
+  clock.hours = advanceClock(clock.hours, step); clock.seconds += step;
+  const light = daylight(clock.hours), dim = .06 + .94 * light.day;
+  for (const part of ['top', 'bottom', 'cloud']) overcast[part].multiplyScalar(dim).lerp(dayColor.setRGB(...light.horizon), .25 * (light.golden + light.dusk));
+  skyColor.setRGB(...light.horizon).lerp(overcast.bottom, cover);
+  skyTop.setRGB(...light.zenith).lerp(overcast.top, cover);
+  skyPalette.zenith.copy(skyTop); skyPalette.horizon.copy(skyColor);
+  skyPalette.cloudLit.setRGB(...light.cloudLit).lerp(overcast.cloud, cover); skyPalette.cloudShade.setRGB(...light.cloudShade).lerp(cloudTint.copy(overcast.cloud).multiplyScalar(.7), cover);
+  sky.update(light, skyPalette, cover, clock.seconds);
+  renderer.toneMappingExposure = light.exposure;
   scene.fog.color.copy(toneMappedHorizon(skyColor, renderer.toneMappingExposure, weatherColor));
-  clouds.setShade(rain);
-  sun.intensity = 2.5 * (1 - .72 * cover); hemisphere.intensity = 1.6 * (1 + .12 * cover);
-  waterSystem.setSky(skyTop, skyColor, 1 - .85 * cover);
+  // The cloud banks take the sky clouds' lit colour (scaled so a clear day stays white).
+  clouds.setShade(rain); clouds.setLight(dayColor.copy(skyPalette.cloudLit).multiplyScalar(1 / .91));
+  // The key light (sun or moon) and the sky's fill.
+  // The shadow direction moves in steps of about 0.15°, under a shadow texel:
+  // turning the shadow map a little every frame would make every shadow edge
+  // shimmer, however steady the frame rate.
+  keyTarget.set(...light.keyDirection);
+  if (keyTarget.angleTo(sunDirection) > .0026) sunDirection.copy(keyTarget);
+  sun.color.setRGB(...light.keyColor); sun.intensity = light.keyIntensity * (1 - .72 * cover);
+  hemisphere.color.setRGB(...light.hemiSky).lerp(overcast.top, cover * .5); hemisphere.groundColor.setRGB(...light.hemiGround);
+  hemisphere.intensity = light.hemiIntensity * (1 + .12 * cover);
+  surfaceLight.setRGB(...light.surfaceLight).multiplyScalar(1 - .25 * cover);
+  waterSystem.setSky(skyTop, skyColor, (1 - .85 * cover) * Math.min(1, light.keyIntensity / 2.5 + light.night * .3), sunDirection, sun.color, skyPalette.cloudLit, surfaceLight);
+  weatherFx.setLight(surfaceLight);
+  dayLight = light;
   // Rain and snow drift with a little wind, relative to the moving camera.
   if (step > 0) weather.cameraVelocity.subVectors(camera.position, weather.lastCamera).divideScalar(step);
   if (weather.cameraVelocity.length() > 400) weather.cameraVelocity.set(0, 0, 0); // a teleport, not motion
@@ -320,7 +337,7 @@ const material = (color, roughness = .85, metalness = 0) => new THREE.MeshStanda
 const bushMaterial = material('#728450'), postMaterial = material('#ded7b4');
 let nature = null, natureError = null;
 loadNatureLibrary().then(library => {
-  nature = library;
+  nature = library; standinLooks = natureLooks(library); buildPendingStandins();
   treeBreakage = createTreeBreakage(scene, nature.treeSources);
 }).catch(error => {
   natureError = error.message;
@@ -332,7 +349,13 @@ const bushGeo = new THREE.IcosahedronGeometry(1, 0).scale(1.1, .7, .9).translate
 const postGeo = new THREE.BoxGeometry(.18, .95, .18).translate(0, .48, 0);
 const matrix = new THREE.Matrix4(), quaternion = new THREE.Quaternion(), upAxis = new THREE.Vector3(0, 1, 0), scaleVec = new THREE.Vector3(), pointVec = new THREE.Vector3();
 const fadingMaterials = new WeakSet();
-function softenScenery(mat) {
+// Real props fade with distance. Trees, cacti, rocks, boulders, bushes and
+// posts (swap: true) stay fully opaque and stop at their own swap distance,
+// where far-tile stand-ins take over (bushes and posts are too small to need
+// one). Landmarks, and every prop on Low graphics, fade out instead over
+// 220–350 m, using multisample coverage.
+function softenScenery(mat, mode = 'fade') {
+  const swap = mode !== 'fade', landmark = mode === 'landmark';
   if (fadingMaterials.has(mat)) return;
   fadingMaterials.add(mat);
   // Use stable multisample coverage instead of screen-space noise, which
@@ -345,27 +368,35 @@ function softenScenery(mat) {
   mat.blending = multisampled ? THREE.NoBlending : THREE.NormalBlending;
   mat.depthWrite = multisampled;
   mat.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, streamUniforms);
-    shader.vertexShader = 'attribute float groundDelta; uniform vec2 uStreamCenter; varying vec2 vSceneryXZ;\n' + shader.vertexShader;
+    Object.assign(shader.uniforms, streamUniforms, { uStandins: standinUniform });
+    shader.vertexShader = `attribute float groundDelta; ${swap ? 'attribute float swapAt; uniform float uStandins;' : ''} ${landmark ? 'attribute vec2 swapCenter;' : ''} uniform vec2 uStreamCenter; varying vec2 vSceneryXZ; varying float vSceneryCover;\n` + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
       vec4 sceneryPosition=vec4(transformed,1.0);
+      vec4 sceneryOrigin=vec4(0.0,0.0,0.0,1.0);
       #ifdef USE_INSTANCING
-        sceneryPosition=instanceMatrix*sceneryPosition;
+        sceneryPosition=instanceMatrix*sceneryPosition; sceneryOrigin=instanceMatrix[3];
       #endif
       vSceneryXZ=(modelMatrix*sceneryPosition).xz;
       float groundBlend=smoothstep(220.0,360.0,distance(vSceneryXZ,uStreamCenter));
       // Group transforms preserve the vertical axis and have unit scale.
       sceneryPosition.y+=groundDelta*groundBlend;
       vec4 mvPosition=modelViewMatrix*sceneryPosition;
-      gl_Position=projectionMatrix*mvPosition;`);
-    shader.fragmentShader = 'uniform vec2 uStreamCenter; varying vec2 vSceneryXZ;\n' + shader.fragmentShader;
+      gl_Position=projectionMatrix*mvPosition;
+      vSceneryCover=0.0;
+      ${swap ? `// Opaque until the prop's swap distance (measured at its origin, exactly
+      // as its stand-in measures it), then gone. Without a swapAt (0), always drawn.
+      float sceneryDistance=distance(${landmark ? 'swapCenter' : '(modelMatrix*sceneryOrigin).xz'},uStreamCenter);
+      if(uStandins>.5){ vSceneryCover=3.0; if(swapAt>0.0&&sceneryDistance>swapAt) gl_Position=vec4(2.0,2.0,2.0,1.0); }
+      else vSceneryCover=3.0-smoothstep(220.0,350.0,sceneryDistance);` : ''}`);
+    shader.fragmentShader = 'uniform vec2 uStreamCenter; varying vec2 vSceneryXZ; varying float vSceneryCover;\n' + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `
       #include <alphatest_fragment>
-      float coverage=1.0-smoothstep(220.0,350.0,distance(vSceneryXZ,uStreamCenter));
+      // A per-prop cover arrives as 2 + cover; otherwise fade per pixel.
+      float coverage=vSceneryCover>1.5?vSceneryCover-2.0:1.0-smoothstep(220.0,350.0,distance(vSceneryXZ,uStreamCenter));
       if(coverage<=0.001) discard;
       diffuseColor.a*=coverage;`);
   };
-  mat.customProgramCacheKey = () => 'scenery-distance-fade-v2';
+  mat.customProgramCacheKey = () => `scenery-${mode}-v2`;
   mat.needsUpdate = true;
 }
 const chunks = new Map();
@@ -390,6 +421,7 @@ function buildChunk({ cx, cz, ground: groundData, props, features, roadside, gra
       pointVec.set(p.x - cx * CHUNK, p.y - .08, p.z - cz * CHUNK); quaternion.setFromAxisAngle(upAxis, p.turn); scaleVec.setScalar(p.size); matrix.compose(pointVec, quaternion, scaleVec); mesh.setMatrixAt(i, matrix);
       if (p.id) { if (!propInstances.has(p.id)) propInstances.set(p.id, []); propInstances.get(p.id).push({ mesh, index: i }); }
     });
+    mesh.userData.swap = Float32Array.from(list, swapDistance);
     mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.natureKind = variant === undefined ? null : type; group.add(mesh);
   }
   for (const [kind, variants] of Object.entries(nature.variants)) {
@@ -397,7 +429,7 @@ function buildChunk({ cx, cz, ground: groundData, props, features, roadside, gra
   }
   instances('bush', bushGeo, bushMaterial); instances('post', postGeo, postMaterial);
   for (const feature of features) {
-    const landmark = buildLandmark(feature, world);
+    const landmark = buildLandmark(feature, world); landmark.userData.feature = feature;
     landmark.position.x -= cx * CHUNK; landmark.position.z -= cz * CHUNK; group.add(landmark);
   }
   group.updateMatrixWorld(true);
@@ -413,7 +445,16 @@ function buildChunk({ cx, cz, ground: groundData, props, features, roadside, gra
       deltas.push(terrain.coarseSample(pointVec.x, pointVec.z).height - world.surface(pointVec.x, pointVec.z));
     }
     o.geometry.setAttribute('groundDelta', o.isInstancedMesh ? new THREE.InstancedBufferAttribute(new Float32Array(deltas), 1) : new THREE.Float32BufferAttribute(deltas, 1));
-    softenScenery(o.material);
+    if (o.userData.swap) o.geometry.setAttribute('swapAt', new THREE.InstancedBufferAttribute(o.userData.swap, 1));
+    // Landmarks swap as a whole, at their centre's distance.
+    const feature = o.parent?.userData.feature;
+    if (feature) {
+      const count = o.isInstancedMesh ? o.count : position.count, at = landmarkSwapDistance(feature);
+      const make = (values, size) => o.isInstancedMesh ? new THREE.InstancedBufferAttribute(values, size) : new THREE.Float32BufferAttribute(values, size);
+      o.geometry.setAttribute('swapAt', make(new Float32Array(count).fill(at), 1));
+      o.geometry.setAttribute('swapCenter', make(Float32Array.from({ length: count * 2 }, (_, i) => i % 2 ? feature.z : feature.x), 2));
+    }
+    softenScenery(o.material, feature ? 'landmark' : o.userData.swap ? 'swap' : 'fade');
   });
   const grassMesh = grass.build(grassData);
   if (grassMesh) { grass.update(grassMesh, cx, cz, vehicle.x, vehicle.z); group.add(grassMesh); }
@@ -426,8 +467,8 @@ function processBreakage() {
     for (const { mesh, index } of chunk?.propInstances.get(prop.id) || []) {
       mesh.getMatrixAt(index, matrix); matrix.scale(scaleVec.set(0, 0, 0)); mesh.setMatrixAt(index, matrix); mesh.instanceMatrix.needsUpdate = true;
     }
-    const impostors = farTiles.get(`${Math.floor(prop.x / FAR_SIZE)},${Math.floor(prop.z / FAR_SIZE)}`)?.userData.impostors, k = impostors?.ids.get(prop.id);
-    if (k !== undefined) { impostors.mesh.getMatrixAt(k, matrix); matrix.scale(scaleVec.set(0, 0, 0)); impostors.mesh.setMatrixAt(k, matrix); impostors.mesh.instanceMatrix.needsUpdate = true; }
+    const standin = farTiles.get(`${Math.floor(prop.x / FAR_SIZE)},${Math.floor(prop.z / FAR_SIZE)}`)?.userData.impostors?.ids.get(prop.id);
+    if (standin) { standin.mesh.getMatrixAt(standin.index, matrix); matrix.scale(scaleVec.set(0, 0, 0)); standin.mesh.setMatrixAt(standin.index, matrix); standin.mesh.instanceMatrix.needsUpdate = true; }
     debris.burst(prop);
     if (prop.type === 'tree') treeBreakage.burst({ ...prop, variant: nature.variantFor(prop) });
     if (!muted && audio) audio.breaks.play(prop.type, Math.hypot(prop.vx, prop.vz), panAt(prop.x, prop.z));
@@ -440,54 +481,150 @@ function disposeChunk(chunk) {
 // Distant forests: one instanced pine silhouette per far tile, placed at the
 // same seeded positions as the real trees. They fade in exactly as the real
 // trees fade out (220–350 m), so flying away never thins the forest.
-const impostorGeometry = (() => {
-  const lower = new THREE.ConeGeometry(1.75, 5, 6).translate(0, 3.2, 0), upper = new THREE.ConeGeometry(1.15, 3.6, 6).translate(0, 5.6, 0);
-  const merged = new THREE.BufferGeometry(), parts = [lower.toNonIndexed(), upper.toNonIndexed()];
-  for (const name of ['position', 'normal']) merged.setAttribute(name, new THREE.Float32BufferAttribute(parts.flatMap(g => [...g.getAttribute(name).array]), 3));
-  return merged;
-})();
-const impostorMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff' });
-{
-  const multisampled = renderer.getContext().getContextAttributes().antialias;
-  Object.assign(impostorMaterial, { transparent: true, alphaToCoverage: multisampled, blending: multisampled ? THREE.NoBlending : THREE.NormalBlending, depthWrite: multisampled });
-  impostorMaterial.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, streamUniforms);
-    shader.vertexShader = 'attribute vec3 groundY; uniform vec2 uStreamCenter; varying float vFade;\n' + shader.vertexShader;
-    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
-      vec4 world = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
-      float d = distance((modelMatrix * instanceMatrix[3]).xz, uStreamCenter);
-      // Follow the terrain tier actually drawn under the tree: fine, far, horizon.
-      world.y += mix(mix(groundY.x, groundY.y, smoothstep(220.0, 360.0, d)), groundY.z, smoothstep(${ULTRA_BLEND_START.toFixed(1)}, ${ULTRA_BLEND_END.toFixed(1)}, d));
-      vFade = smoothstep(220.0, 350.0, d);
-      vec4 mvPosition = viewMatrix * world;
-      gl_Position = projectionMatrix * mvPosition;`);
-    shader.fragmentShader = 'varying float vFade;\n' + shader.fragmentShader.replace('#include <alphatest_fragment>', `
-      #include <alphatest_fragment>
-      if (vFade <= 0.001) discard;
-      diffuseColor.a *= vFade;`);
+// Distant scenery: far tiles carry simple stand-ins for every tree, cactus,
+// rock, boulder and bush the near chunks will place, at the same seeded spots. Each
+// prop swaps between its real model and its stand-in at its own distance
+// (swapDistance, 260–340 m): both are always opaque, so nothing turns ghostly,
+// and because the swaps are scattered there is no visible line. Stand-ins are
+// fitted to their real model's bounds and coloured like it. Skipped on Low,
+// where real props fade out over 220–350 m instead.
+const swapDistance = p => 260 + 80 * hash(Math.round(p.x * 4), Math.round(p.z * 4), 9137);
+const standinUniform = { value: qualityLevel > 0 ? 1 : 0 };
+const STANDIN_TYPES = ['tree', 'cactus', 'rock', 'boulder', 'bush'];
+// Unit shapes: x and z in [-.5, .5], y in [0, 1]; each is scaled to its model.
+const standinShapes = (() => {
+  const merge = parts => {
+    const merged = new THREE.BufferGeometry(), flat = parts.map(g => g.index ? g.toNonIndexed() : g);
+    for (const name of ['position', 'normal']) merged.setAttribute(name, new THREE.Float32BufferAttribute(flat.flatMap(g => [...g.getAttribute(name).array]), 3));
+    return merged;
   };
-  impostorMaterial.customProgramCacheKey = () => 'tree-impostor-v1';
-}
-let impostorsEnabled = qualityLevel > 0;
-function buildImpostors(tile, trees) {
-  const keep = trees.id.map((id, i) => world.brokenProps.has(id) ? -1 : i).filter(i => i >= 0);
-  if (!keep.length) return;
-  const geometry = impostorGeometry.clone(), groundY = new Float32Array(keep.length * 3);
-  const mesh = new THREE.InstancedMesh(geometry, impostorMaterial, keep.length), color = new THREE.Color(), ids = new Map();
-  keep.forEach((i, k) => {
-    pointVec.set(trees.x[i] - tile.position.x, 0, trees.z[i] - tile.position.z); quaternion.setFromAxisAngle(upAxis, trees.turn[i]);
-    scaleVec.setScalar(trees.size[i]); matrix.compose(pointVec, quaternion, scaleVec); mesh.setMatrixAt(k, matrix);
-    groundY.set([trees.fineY[i] - .1, trees.coarseY[i] - .1, trees.ultraY[i] - .1], k * 3);
-    mesh.setColorAt(k, color.setHSL(.28 + (hash(i, k, seed) - .5) * .05, .2 + hash(k, i, seed) * .1, .27 + hash(i, i, seed) * .06));
-    ids.set(trees.id[i], k);
+  return {
+    tree: merge([new THREE.CylinderGeometry(.05, .07, .2, 5).translate(0, .1, 0), new THREE.ConeGeometry(.5, .62, 7).translate(0, .46, 0), new THREE.ConeGeometry(.34, .5, 7).translate(0, .75, 0)]),
+    cactus: merge([new THREE.CylinderGeometry(.13, .15, 1, 7).translate(0, .5, 0),
+      new THREE.CylinderGeometry(.06, .06, .3, 5).rotateZ(Math.PI / 2).translate(-.24, .38, 0), new THREE.CylinderGeometry(.09, .09, .42, 6).translate(-.38, .57, 0),
+      new THREE.CylinderGeometry(.06, .06, .3, 5).rotateZ(Math.PI / 2).translate(.24, .5, 0), new THREE.CylinderGeometry(.09, .09, .36, 6).translate(.38, .66, 0)]),
+    rock: merge([new THREE.IcosahedronGeometry(.5, 0).scale(1, 1, 1).translate(0, .5, 0)]),
+    boulder: merge([new THREE.IcosahedronGeometry(.5, 1).translate(0, .5, 0)]),
+    // Bushes are already this simple: their own shape, fitted to the unit box.
+    bush: (() => { const g = bushGeo.clone(); g.computeBoundingBox(); const b = g.boundingBox, size = b.getSize(new THREE.Vector3()); return g.translate(-(b.min.x + b.max.x) / 2, -b.min.y, -(b.min.z + b.max.z) / 2).scale(1 / size.x, 1 / size.y, 1 / size.z); })(),
+  };
+})();
+// From the real models once loaded: each variant's bounds and colour (trees:
+// the foliage's), so a stand-in matches the model it replaces.
+function natureLooks(library) {
+  const looks = {};
+  for (const type of STANDIN_TYPES) looks[type] = (library.variants[type] ?? []).map(({ geometry }) => {
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox, colors = geometry.getAttribute('color'), positions = geometry.getAttribute('position'), sum = [0, 0, 0];
+    const floor = type === 'tree' ? box.min.y + (box.max.y - box.min.y) * .3 : -Infinity;
+    let n = 0;
+    for (let i = 0; i < colors.count; i++) if (positions.getY(i) >= floor) { sum[0] += colors.getX(i); sum[1] += colors.getY(i); sum[2] += colors.getZ(i); n++; }
+    return { min: box.min.clone(), size: box.getSize(new THREE.Vector3()), color: new THREE.Color(sum[0] / n, sum[1] / n, sum[2] / n) };
   });
-  geometry.setAttribute('groundY', new THREE.InstancedBufferAttribute(groundY, 3));
-  mesh.visible = impostorsEnabled; mesh.frustumCulled = false; mesh.name = 'Tree impostors';
-  tile.add(mesh); tile.userData.impostors = { mesh, ids };
+  bushGeo.computeBoundingBox();
+  looks.bush = [{ min: bushGeo.boundingBox.min.clone(), size: bushGeo.boundingBox.getSize(new THREE.Vector3()), color: bushMaterial.color.clone() }];
+  return looks;
+}
+let standinLooks = null;
+const standinMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: .94 });
+standinMaterial.onBeforeCompile = shader => {
+  Object.assign(shader.uniforms, streamUniforms);
+  shader.vertexShader = 'attribute vec3 groundY; attribute float swapAt; uniform vec2 uStreamCenter;\n' + shader.vertexShader;
+  shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
+    vec4 world = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+    float d = distance((modelMatrix * instanceMatrix[3]).xz, uStreamCenter);
+    // Follow the terrain tier actually drawn under the prop: fine, far, horizon.
+    world.y += mix(mix(groundY.x, groundY.y, smoothstep(220.0, 360.0, d)), groundY.z, smoothstep(${ULTRA_BLEND_START.toFixed(1)}, ${ULTRA_BLEND_END.toFixed(1)}, d));
+    vec4 mvPosition = viewMatrix * world;
+    // Drawn only beyond the prop's swap distance, where its real model stops.
+    gl_Position = d > swapAt ? projectionMatrix * mvPosition : vec4(2.0, 2.0, 2.0, 1.0);`);
+};
+standinMaterial.customProgramCacheKey = () => 'standin-v1';
+let impostorsEnabled = qualityLevel > 0;
+function buildImpostors(tile, props) {
+  if (!standinLooks) { tile.userData.pendingStandins = props; return; } // built once the models load
+  const byType = new Map(STANDIN_TYPES.map(t => [t, []]));
+  props.id.forEach((id, i) => { if (!world.brokenProps.has(id)) byType.get(props.type?.[i] ?? 'tree')?.push(i); });
+  const meshes = [], ids = new Map();
+  for (const [type, list] of byType) {
+    if (!list.length || !standinLooks[type]?.length) continue;
+    const geometry = standinShapes[type].clone(), groundY = new Float32Array(list.length * 3), swap = new Float32Array(list.length);
+    const mesh = new THREE.InstancedMesh(geometry, standinMaterial, list.length);
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, minY = Infinity, maxY = -Infinity;
+    list.forEach((i, k) => {
+      const p = { type, x: props.x[i], z: props.z[i] }, look = standinLooks[type][nature.variantFor(p)], size = props.size[i];
+      pointVec.set(props.x[i] - tile.position.x, look.min.y * size, props.z[i] - tile.position.z); quaternion.setFromAxisAngle(upAxis, props.turn[i]);
+      scaleVec.copy(look.size).multiplyScalar(size); matrix.compose(pointVec, quaternion, scaleVec); mesh.setMatrixAt(k, matrix);
+      mesh.setColorAt(k, look.color);
+      groundY.set([props.fineY[i] - .08, props.coarseY[i] - .08, props.ultraY[i] - .08], k * 3); swap[k] = swapDistance(p);
+      ids.set(props.id[i], { mesh, index: k });
+      minX = Math.min(minX, pointVec.x); maxX = Math.max(maxX, pointVec.x); minZ = Math.min(minZ, pointVec.z); maxZ = Math.max(maxZ, pointVec.z);
+      minY = Math.min(minY, props.fineY[i], props.coarseY[i], props.ultraY[i]); maxY = Math.max(maxY, props.fineY[i], props.coarseY[i], props.ultraY[i] + scaleVec.y);
+    });
+    geometry.setAttribute('groundY', new THREE.InstancedBufferAttribute(groundY, 3));
+    geometry.setAttribute('swapAt', new THREE.InstancedBufferAttribute(swap, 1));
+    // Bounds include the terrain heights the shader adds, so off-screen tiles are culled.
+    const box = new THREE.Box3(new THREE.Vector3(minX - 30, minY - 5, minZ - 30), new THREE.Vector3(maxX + 30, maxY + 40, maxZ + 30));
+    mesh.boundingSphere = box.getBoundingSphere(new THREE.Sphere()); mesh.boundingBox = box;
+    mesh.visible = impostorsEnabled; mesh.name = `Distant ${type}s`;
+    tile.add(mesh); meshes.push(mesh);
+  }
+  const entry = tile.userData.impostors ??= { meshes: [], ids: new Map() };
+  entry.meshes.push(...meshes); for (const [id, ref] of ids) entry.ids.set(id, ref);
+}
+// Ramps, cabins and lookouts: one merged stand-in mesh per far tile (see
+// scenery.mjs), drawn beyond each landmark's swap distance and resting on
+// whichever terrain tier is drawn there.
+const landmarkStandinMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .85 });
+landmarkStandinMaterial.onBeforeCompile = shader => {
+  Object.assign(shader.uniforms, streamUniforms);
+  shader.vertexShader = 'attribute vec2 groundDeltas; attribute vec2 swapCenter; attribute float swapAt; uniform vec2 uStreamCenter;\n' + shader.vertexShader;
+  shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
+    vec4 world = modelMatrix * vec4(transformed, 1.0);
+    float here = distance(world.xz, uStreamCenter), d = distance(swapCenter, uStreamCenter);
+    world.y += mix(groundDeltas.x * smoothstep(220.0, 360.0, here), groundDeltas.y, smoothstep(${ULTRA_BLEND_START.toFixed(1)}, ${ULTRA_BLEND_END.toFixed(1)}, here));
+    vec4 mvPosition = viewMatrix * world;
+    gl_Position = d > swapAt ? projectionMatrix * mvPosition : vec4(2.0, 2.0, 2.0, 1.0);`);
+};
+landmarkStandinMaterial.customProgramCacheKey = () => 'landmark-standin-v1';
+const landmarkQueue = [];
+// Built one landmark per frame (each takes about a millisecond); a tile's
+// pieces are merged into its single mesh once all of them are done.
+function stepLandmarkStandin(tile) {
+  const job = tile.userData.landmarkJob ??= (() => {
+    const x0 = tile.position.x, z0 = tile.position.z;
+    return { features: world.featuresNear(x0 + FAR_SIZE / 2, z0 + FAR_SIZE / 2, FAR_SIZE * .75).filter(f => f.x >= x0 && f.x < x0 + FAR_SIZE && f.z >= z0 && f.z < z0 + FAR_SIZE), parts: [] };
+  })();
+  const feature = job.features.shift();
+  if (feature) { const part = buildLandmarkStandins([feature], world, terrain, tile.position); if (part) job.parts.push(part); }
+  if (job.features.length) return false;
+  delete tile.userData.landmarkJob;
+  if (!job.parts.length) return true;
+  const geometry = mergeStandinParts(job.parts);
+  const mesh = new THREE.Mesh(geometry, landmarkStandinMaterial); mesh.name = 'Distant landmarks'; mesh.visible = impostorsEnabled;
+  tile.add(mesh);
+  (tile.userData.impostors ??= { meshes: [], ids: new Map() }).meshes.push(mesh);
+  return true;
+}
+function mergeStandinParts(parts) {
+  if (parts.length === 1) return parts[0];
+  const merged = new THREE.BufferGeometry();
+  for (const name of Object.keys(parts[0].attributes)) {
+    const size = parts[0].getAttribute(name).itemSize, total = parts.reduce((n, g) => n + g.getAttribute(name).array.length, 0), array = new Float32Array(total);
+    let at = 0; for (const g of parts) { array.set(g.getAttribute(name).array, at); at += g.getAttribute(name).array.length; }
+    merged.setAttribute(name, new THREE.BufferAttribute(array, size));
+  }
+  for (const g of parts) g.dispose();
+  merged.computeBoundingSphere(); merged.boundingSphere.radius += 40;
+  return merged;
+}
+// Stand-ins for tiles that arrived before the models had loaded.
+function buildPendingStandins() {
+  for (const tile of farTiles.values()) if (tile.userData.pendingStandins) { const props = tile.userData.pendingStandins; delete tile.userData.pendingStandins; buildImpostors(tile, props); }
 }
 function disposeTile(tile) {
   scene.remove(tile); tile.geometry.dispose();
-  if (tile.userData.impostors) { tile.userData.impostors.mesh.geometry.dispose(); tile.userData.impostors.mesh.dispose(); }
+  for (const mesh of tile.userData.impostors?.meshes ?? []) { mesh.geometry.dispose(); if (mesh.isInstancedMesh) mesh.dispose(); } // landmark stand-ins are plain meshes
 }
 function refreshUltraTile(tile) {
   const { cx: tx, cz: tz } = tile.userData, hasFar = (fx, fz) => farTiles.has(`${fx},${fz}`);
@@ -600,9 +737,18 @@ function processStreaming() {
       tile.position.set(job.cx * FAR_SIZE, 0, job.cz * FAR_SIZE);
       tile.userData = { cx: job.cx, cz: job.cz }; tile.receiveShadow = true;
       farTiles.set(`${job.cx},${job.cz}`, tile); refreshFarTile(job.cx, job.cz); scene.add(tile);
-      buildImpostors(tile, job.trees);
+      profiler.measure('propStandins', () => buildImpostors(tile, job.trees));
+      landmarkQueue.push(tile); // built in a later frame with time to spare
       const parent = ultraTiles.get(`${Math.floor(job.cx / 4)},${Math.floor(job.cz / 4)}`); if (parent) refreshUltraTile(parent);
     }
+  }
+  // Landmark stand-ins for newly arrived far tiles: one landmark per frame, and
+  // only when this frame's installs left time, so they never cause a hitch.
+  while (landmarkQueue.length && performance.now() - budgetStart < 1.5) {
+    const tile = landmarkQueue[0];
+    if (farTiles.get(`${tile.userData.cx},${tile.userData.cz}`) !== tile) { landmarkQueue.shift(); continue; } // already unloaded
+    if (profiler.measure('landmarkStandins', () => stepLandmarkStandin(tile))) landmarkQueue.shift();
+    break;
   }
   profiler.record('streamInstall', performance.now() - budgetStart);
   while (pending.size < 3 && jobs.length) {
@@ -625,7 +771,7 @@ function processStreaming() {
 }
 function beginWorldLoad(continueDriving = false) {
   if (running) pause();
-  worker?.terminate(); generation++; pending.clear(); completed = []; jobs = [];
+  worker?.terminate(); generation++; pending.clear(); completed = []; jobs = []; landmarkQueue.length = 0;
   loading = true; resumeAfterLoad = continueDriving; running = false; streamError = null; loadingStarted = performance.now();
   $('startBtn').disabled = true; resetTiming();
   for (const chunk of chunks.values()) disposeChunk(chunk); chunks.clear();
@@ -633,7 +779,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=water-up-1', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=standin-4', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -667,6 +813,9 @@ loadVehicleModel(renderer).then(asset => {
 });
 const headlight = new THREE.SpotLight('#ffe4b1', 0, 60, .5, .5, 1.2); headlight.position.set(0, 1.5, 2);
 const lightTarget = new THREE.Object3D(); lightTarget.position.set(0, 0, 25); car.add(headlight, lightTarget); headlight.target = lightTarget;
+// Headlights come on by themselves at dusk and go off after sunrise, until you
+// choose with L for the rest of the visit.
+function setHeadlights(on) { headlight.intensity = on ? 75 : 0; headMat.emissiveIntensity = on ? 2 : .45; }
 // Soft contact shadow makes the height of jumps easy to judge.
 const shadowCanvas = document.createElement('canvas'); shadowCanvas.width = shadowCanvas.height = 64;
 const shadowContext = shadowCanvas.getContext('2d'), shadowGradient = shadowContext.createRadialGradient(32, 32, 2, 32, 32, 32);
@@ -785,7 +934,7 @@ function newWorld() {
   debris.clear(); treeBreakage?.clear(); audio?.breaks.clear(); audio?.vehicle.clear();
   const url = new URL(location.href); url.searchParams.set('seed', seed); history.replaceState(null, '', url);
   beginWorldLoad(continueDriving); resetCamera(); syncSeed(); updateHUD(); drawMap();
-  reportedLanding = 0; reportedBoat = false; reportedFlying = false; clouds.reset(seed); weather.clock = 0; weather.check = 0; weather.rain = weather.snow = 0; $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
+  reportedLanding = 0; reportedBoat = false; reportedFlying = false; clouds.reset(seed); weather.clock = 0; weather.clouds = .38; if (!fixedTime) clock.hours = worldHour(seed); weather.check = 0; weather.rain = weather.snow = 0; $('runDistance').textContent = '0.00'; toast('A new road ahead. World ' + seed);
 }
 function syncSeed() { $('seedTxt').textContent = String(seed).padStart(6, '0'); }
 $('startBtn').onclick = resume; $('pauseBtn').onclick = pause; $('newWorld').onclick = newWorld;
@@ -799,6 +948,17 @@ function toggleFly() {
   updateHUD();
 }
 $('flyBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (running) toggleFly(); });
+// 1–4 (or Time of day in the menu) jump to sunrise, noon, sunset or night;
+// the clock carries on from there.
+const TIME_PRESETS = [['Sunrise', 6.2], ['Noon', 12], ['Sunset', 17.8], ['Night', 22]];
+let timePreset = -1;
+function setTimeOfDay(index) {
+  timePreset = index; const [name, hours] = TIME_PRESETS[index];
+  clock.hours = hours; weather.check = 0;
+  $('timeBtn').textContent = `Time of day: ${name}`;
+  toast(`${name} · ${clockLabel(hours)}`);
+}
+$('timeBtn').onclick = () => setTimeOfDay((timePreset + 1) % TIME_PRESETS.length);
 // T switches between full three-axis flight and the simple arcade controls
 // (bank to turn, climb/dive, levels itself when released) for this visit.
 function toggleFlightControls() {
@@ -839,8 +999,10 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyR') recover();
   if (e.code === 'KeyF') toggleFly();
   if (e.code === 'KeyT') toggleFlightControls();
+  const preset = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Numpad1: 0, Numpad2: 1, Numpad3: 2, Numpad4: 3 }[e.code];
+  if (preset !== undefined) setTimeOfDay(preset);
   if (e.code === 'KeyN') newWorld();
-  if (e.code === 'KeyL') { lightsOn = !lightsOn; headlight.intensity = lightsOn ? 75 : 0; headMat.emissiveIntensity = lightsOn ? 2 : .45; toast(lightsOn ? 'Headlights on' : 'Headlights off'); }
+  if (e.code === 'KeyL') { lightsOn = !lightsOn; lightsChosen = true; setHeadlights(lightsOn); toast(lightsOn ? 'Headlights on' : 'Headlights off'); }
 });
 addEventListener('keyup', e => { keyStates.delete(e.code); syncInput(); });
 addEventListener('blur', () => { clearInput(); pause(); });
@@ -871,10 +1033,10 @@ function applyQuality(index) {
   }
   setFarShadow(level.farShadow);
   grass.setQuality(level.grass);
-  // Distant tree stand-ins are skipped on Low.
-  impostorsEnabled = index > 0;
+  // Distant stand-ins are skipped on Low (real props fade out instead).
+  impostorsEnabled = index > 0; standinUniform.value = impostorsEnabled ? 1 : 0;
   weatherFx.setDensity([.35, .6, .8, 1][index]);
-  for (const tile of farTiles.values()) if (tile.userData.impostors) tile.userData.impostors.mesh.visible = impostorsEnabled;
+  for (const tile of farTiles.values()) for (const mesh of tile.userData.impostors?.meshes ?? []) mesh.visible = impostorsEnabled;
   // Low draws one wave layer with no reflected clouds, sparkle or caustics.
   waterSystem.setDetail(index > 0);
   syncSettings();
@@ -1009,6 +1171,8 @@ function updateHUD() {
   $('headingTxt').textContent = headings[((Math.round(vehicle.heading / (Math.PI / 4)) % 8) + 8) % 8];
   $('biomeTxt').textContent = vehicle.waterDepth > 0 ? world.waterAt(vehicle.x, vehicle.z)?.lake.name ?? 'THE LAKES' : world.desertAt(vehicle.x, vehicle.z) > .55 ? 'THE SANDLANDS' : world.mountainAt(vehicle.x, vehicle.z) > .62 ? 'THE HIGHLANDS' : world.woodlandAt(vehicle.x, vehicle.z) > .58 ? 'PINE COUNTRY' : 'OPEN MEADOW';
   if (weather.rain > .3 || weather.snow > .3) $('biomeTxt').textContent += weather.snow > weather.rain ? ' · SNOW' : ' · RAIN';
+  $('biomeTxt').textContent += ` · ${clockLabel(clock.hours)}`;
+  if (!lightsChosen && lightsOn !== dayLight.day < .45) { lightsOn = dayLight.day < .45; setHeadlights(lightsOn); }
   $('coordinates').textContent = `${Math.round(Math.abs(vehicle.x))} ${vehicle.x < 0 ? 'E' : 'W'} · ${Math.round(Math.abs(vehicle.z))} ${vehicle.z >= 0 ? 'N' : 'S'}`;
   $('elevation').textContent = Math.round(flying ? vehicle.y : vehicle.floating ? vehicle.waterLevel : world.surface(vehicle.x, vehicle.z)) + ' M';
   profiler.record('hud', performance.now() - hudStarted);
@@ -1083,8 +1247,10 @@ function render(dt) {
   const nextFov = followValue(camera.fov, previousTargetFov, targetFov, 2.45, dt);
   previousTargetFov = targetFov;
   if (Math.abs(camera.fov - nextFov) > 1e-6) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
-  sky.position.copy(camera.position);
-  clouds.update(camera);
+  sky.mesh.position.copy(camera.position);
+  // Cloud banks drift with the weather's wind, faster aloft and in storms.
+  const aloftWind = Math.hypot(weather.gust.x, weather.gust.z) || 1, windSpeed = 7 + 9 * Math.max(weather.rain, weather.snow);
+  clouds.update(camera, running ? dt : 0, weather.gust.x / aloftWind * windSpeed, weather.gust.z / aloftWind * windSpeed, weather.clouds);
   // From the air, see further: fog recedes onto the horizon terrain tier as
   // the camera climbs, and the near plane moves out to keep depth precision.
   const aloft = smoothstep(40, 320, camera.position.y - world.surface(camera.position.x, camera.position.z));
@@ -1190,6 +1356,6 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   }
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
-  const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.mesh.count ?? 0), 0);
-  return { weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.meshes ?? []).reduce((m, mesh) => m + (mesh.isInstancedMesh ? mesh.count : 0), 0), 0);
+  return { clouds: { cloudiness: weather.clouds, drift: clouds.drift.toArray(), banks: clouds.count }, time: { hours: clock.hours, clock: clockLabel(clock.hours), day: dayLight.day, night: dayLight.night, sunHeight: dayLight.sun[1], key: sun.intensity, exposure: renderer.toneMappingExposure, headlights: lightsOn }, weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, stalePending: [...pending.values()].filter(job => job.generation !== generation).length, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };

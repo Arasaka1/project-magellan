@@ -210,7 +210,8 @@ test('keyboard jump, driving across chunks, recovery, and new-world reset', asyn
   const fresh = await snapshot(page);
   expect(fresh.vehicle.distance).toBe(0); expect(fresh.accumulator).toBeLessThan(1 / 120);
   expect(Math.hypot(fresh.target[0], fresh.target[2])).toBeLessThan(8);
-  expect(fresh.chunks).toBeLessThanOrEqual(121); expect(fresh.pending).toBeLessThanOrEqual(2);
+  // The old world's work is cancelled; the new one may keep its usual three jobs in flight.
+  expect(fresh.chunks).toBeLessThanOrEqual(121); expect(fresh.stalePending).toBe(0); expect(fresh.pending).toBeLessThanOrEqual(3);
   expect(errors).toEqual([]);
 });
 

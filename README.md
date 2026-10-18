@@ -22,6 +22,10 @@ Every visit generates a new world. Add `?seed=123456` to a link to share or revi
     <td><img src="docs/screenshots/desert.jpg" alt="A road through sandy desert dunes dotted with cacti"><br><sub><b>The Sandlands.</b> Deserts, snowfields, pine woods and meadows.</sub></td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/sunset.jpg" alt="Driving at dusk under a pink sunset sky, headlights on"><br><sub><b>Day and night.</b> The sun rises and sets, and dusk glows pink.</sub></td>
+    <td><img src="docs/screenshots/night.jpg" alt="Driving at night by headlight under a dark blue moonlit sky"><br><sub><b>Night.</b> Drive by moonlight and headlights.</sub></td>
+  </tr>
+  <tr>
     <td colspan="2"><img src="docs/screenshots/rain.jpg" alt="Driving through a grassy meadow in heavy rain under a grey sky"><br><sub><b>Weather.</b> Each region has its own climate: rain in the pines, snow on the peaks, sun in the desert.</sub></td>
   </tr>
 </table>
@@ -63,6 +67,7 @@ You need a browser with WebGL and module workers. Everything else is bundled: Th
 | M | Sound on / off |
 | Esc / P | Pause / resume |
 | N | New world |
+| 1 / 2 / 3 / 4 | Jump to sunrise, noon, sunset or night (also **Time of day** in the menu) |
 
 In the water the same keys drive the boat: W/S thrust, A/D steer, Shift slows down. You can't jump while floating.
 
@@ -100,6 +105,8 @@ The game pauses when the window loses focus. Sound starts muted on your first vi
 
 **Flying.** Press F from the car, the boat, or mid-jump. Over 1.6 seconds the wings telescope out of the doors (7.5 m span), tail booms extend and a propeller pushes out through the grille. On the ground or water the plane taxis and lifts off at about 115 km/h. A jump with the wings half out turns into a glide. It's a real physics model: lift, drag, stalls, a ceiling near 650 m, and a top speed of about 340 km/h. Touch down below flying speed and you land as the car (or as the boat on deep water). Wingtips that touch the ground end the flight, and the wings smash trees and rocks they hit. See [Flight model](#flight-model) for the details.
 
+**Day and night.** The sun rises, crosses the sky and sets: a day lasts 12 minutes and a night 4. Sunrise and sunset light the sky gold and pink, shadows stretch, and clouds glow from the sun's side. At night the moon and stars come out, the world is lit dim blue, and the headlights come on by themselves (press L to take over). The HUD shows the time next to the region. Each world starts at its own time of day or night, chosen from its seed (night about a quarter of the time, as often as you'd meet it while playing), so a shared seed link starts at the same time too. `?time=18` starts at 18:00 instead. Press 1–4 to jump to sunrise, noon, sunset or night; the clock carries on from there.
+
 **Weather.** Each region has its own climate:
 
 | Region | Weather |
@@ -109,7 +116,7 @@ The game pauses when the window loses focus. Sound starts muted on your first vi
 | Pine woods | Rain 40%, sunny 60% |
 | Open meadows | Rain 20%, sunny 80% |
 
-Weather changes every couple of minutes per 2 km area and builds and clears over about 20 seconds. Bad weather greys the sky, clouds and water, dims the sun and closes in the fog, and the region label adds · RAIN or · SNOW. `?weather=rain|snow|clear` forces it.
+Cloud cover follows the region too: desert skies are nearly clear, meadows about a third cloudy, pine woods half and snowfields mostly grey. The cover wanders over a few minutes, and clouds gather about half a minute before rain or snow arrives. While it rains or snows, the sky closes into one unbroken overcast down to the horizon. Clouds drift with the wind and slowly change shape, and the cloud banks you can fly through drift too, filling in and thinning out with the cover. Weather changes every couple of minutes per 2 km area and builds and clears over about 20 seconds. Bad weather greys the sky, clouds and water, dims the sun and closes in the fog, and the region label adds · RAIN or · SNOW. `?weather=rain|snow|clear` forces it.
 
 **Scenery and destruction.** Pines, shrubs, cacti, rocks, boulders, roadside markers, cabins and lookout towers, all modeled in Blender. Trees, cacti and small rocks shatter if you hit them above 65 km/h (boulders need 94 km/h); trees split into falling sections, and broken props stay broken for the rest of your visit. Clearances keep scenery off roads and ramp approaches.
 
@@ -147,6 +154,7 @@ A graph plots the last 120 frames against the 60 and 30 fps lines. Browsers usua
 | `?seed=N` | Generate world N |
 | `?quality=low\|medium\|high\|auto` | Force a graphics level |
 | `?weather=rain\|snow\|clear` | Force the weather |
+| `?time=H` | Start at hour H (for example `18.5` for 18:30) |
 | `?test=water` / `boat` / `fly` / `sea` | Start by the lake, afloat, in the air, or approaching the first sea |
 | `?test=ramp` / `twist` / `smash` / `tree-smash` | Repeatable stunt and impact approaches |
 | `?test=drive` / `browser` | Test modes with a read-only diagnostics snapshot |
@@ -164,7 +172,7 @@ Test modes keep their trip records separate from normal play. The `seed=3` world
 | World | `world.mjs` (terrain, roads, props, vehicle physics), `terrain.mjs`, `lakes.mjs`, `streaming-layout.mjs`, `world-worker.mjs` (background generation) |
 | Vehicle | `vehicle-model.mjs` (loads the glTF), `vehicle-presentation.mjs` (smooth motion between physics steps), `amphibious-motion.mjs` (boat), `flight-motion.mjs` (plane), `controls.mjs` (steering response) |
 | Water | `water-data.mjs` (meshes, built in the worker), `water.mjs` (shader and wakes) |
-| Weather and sky | `weather.mjs` (regional odds), `weather-effects.mjs` (rain, snow, fog colour), `clouds.mjs` |
+| Weather and sky | `daylight.mjs` (the clock, sun and moon paths, light colours), `sky.mjs` (sky dome, sun, moon, stars, clouds), `weather.mjs` (regional odds), `weather-effects.mjs` (rain, snow, fog colour), `clouds.mjs` (cloud banks) |
 | Scenery | `scenery.mjs` (ramps, cabins, lookouts), `nature-models.mjs`, `grass-data.mjs`, `grass.mjs` |
 | Effects | `tree-breakage.mjs`, `debris.mjs`, `shadow-fade.mjs`, `camera-motion.mjs` |
 | Sound | `vehicle-audio.mjs`, `break-audio.mjs` |
@@ -254,7 +262,7 @@ To update the bundled Three.js deliberately, run `npm run vendor` and commit the
 - **Three terrain tiers.** Around the car stream 81 detailed 96 m chunks, then 384 m coarse tiles, then 1,536 m horizon tiles reaching about 5 km for the view from the air. Each tier cuts holes only where the tier inside it has loaded, so there are no gaps while tiles stream in, and the tiers blend into each other over set distances, so they meet without cracks.
 - **Background loading.** A module worker builds terrain, props, grass and water ahead of time. The main thread installs results within a 4 ms budget per frame, loading tiles ahead of a fast car or plane first.
 - **Fog.** As you climb, fog recedes from 350–1,450 m to 1,250–4,350 m. Its colour is always the sky's horizon colour after tone mapping, so distant terrain fades into the sky instead of leaving a band on the skyline.
-- **Distant detail.** Far tiles carry stand-in pines that fade in exactly as the real trees fade out. Every lake and sea out to 4.6 km is one worker-built water mesh, replaced by detailed patches within about 1 km. All water rides just above whichever terrain tier is drawn beneath it, so coarse terrain never buries a pond.
+- **Distant detail.** Far tiles carry simple stand-ins for every tree, cactus, rock, boulder and bush, at the same seeded spots, fitted to the real model's size and coloured like it. Each prop swaps between its real model and its stand-in at its own distance (somewhere in 260–340 m). Both are always opaque, so nothing turns see-through, and the scattered swap points leave no visible line. Ramps, cabins and lookouts work the same way: each far tile has one merged stand-in mesh built from the real landmark geometry, and each landmark swaps as a whole at its own distance (300–360 m). On Low there are no stand-ins, and real props fade out over 220–350 m instead. Every lake and sea out to 4.6 km is one worker-built water mesh, replaced by detailed patches within about 1 km. All water rides just above whichever terrain tier is drawn beneath it, so coarse terrain never buries a pond.
 - **Clouds.** Cloud puffs fade in with distance and are fully transparent before any new patch of sky can appear, so they never pop in.
 
 ### Driving physics
@@ -295,6 +303,25 @@ Past about 16° the wing stalls, pulls are limited to about 5 g, and thin air ab
 - **Scenery strikes.** The wings collide with trees, cacti, rocks and boulders at the height they're flying. A strike drags that wing back, yawing and rolling the plane toward it.
 
 **Simple controls** fly through the same physics. The controls command a bank angle and a climb angle, and the flight path also swings round directly, so a full turn takes about 10 seconds at any speed.
+
+### Time of day
+
+`daylight.mjs` turns the clock into everything the scene needs:
+
+- **Paths.** The sun moves on a tilted circle, peaking at about 55° at noon. The moon rides opposite it.
+- **Colours.** The sky's zenith and horizon colours, cloud colours and the hemisphere fill blend between day, golden-hour, dusk and night palettes as the sun's height changes.
+- **Key light.** The sun by day, the moon by night. It hands over just below the horizon, where both are almost dark, and casts the shadows.
+- **Exposure.** A little brighter at night, as eyes adapt.
+
+The sky dome (`sky.mjs`) draws:
+
+- the gradient;
+- a glow along the horizon around a low sun;
+- the sun's disc and halo;
+- the moon and twinkling stars;
+- clouds whose character changes across the sky (very large drifting fields decide where clouds gather or the sky stays open, big masses or small puffs, and crisp heaped clouds or faint stretched wisps), read from a tiling noise texture, drifting with the wind and slowly reshaping (a slower noise field gently warps the pattern), covering as much of the sky as the cloudiness says, and shaded by sampling the cloud toward the sun (darker bases, bright edges, a silver lining).
+
+Everything else follows the same light: fog, water reflections, glitter and colour, rain and snow, and the cloud banks. Weather's overcast dims with the day, so a stormy night is near black. Unit tests check the sun's path, the 12 + 4 minute cycle, and that the light never jumps between frames.
 
 ### Water rendering
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { featurePoint } from './world.mjs?v=physics-16';
+import { featurePoint, hash } from './world.mjs?v=physics-16';
 
 // Three.js BufferGeometry.clone() shares userData with its source. Detach it
 // before marking ownership, or the shared template becomes disposable too.
@@ -122,4 +122,59 @@ export function buildLandmark(feature, world) {
     matrices.forEach((matrix, i) => mesh.setMatrixAt(i, matrix)); mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh);
   }
   return group;
+}
+
+// Each landmark swaps between its real model and its stand-in at one distance,
+// measured from its centre, so the whole ramp or building changes at once.
+export const landmarkSwapDistance = feature => 300 + 60 * hash(Math.round(feature.x * 4), Math.round(feature.z * 4), 9151);
+const DECK_COLORS = { 0: new THREE.Color('#c27f4c'), 1: new THREE.Color('#9168b4') };
+// One merged, vertex-coloured mesh standing in for every landmark on a far
+// tile (one draw call), built from the same geometry as the real landmarks.
+// Each vertex carries its landmark's centre and swap distance, and how far the
+// coarse and horizon terrain tiers sit from the real ground beneath it, so the
+// stand-in rests on whichever tier is drawn. Positions are relative to origin.
+export function buildLandmarkStandins(features, world, terrain, origin) {
+  const position = [], normal = [], color = [], ground = [], swap = [], center = [];
+  const v = new THREE.Vector3(), n = new THREE.Vector3(), m = new THREE.Matrix4(), instance = new THREE.Matrix4(), normals = new THREE.Matrix3();
+  const box = unitBox.index ? unitBox.toNonIndexed() : unitBox;
+  // Each ground point is sampled once (a non-indexed deck repeats every corner).
+  const sampled = new Map();
+  const deltas = (x, z) => {
+    const key = `${Math.round(x * 8)},${Math.round(z * 8)}`;
+    let d = sampled.get(key);
+    if (!d) { const fine = world.surface(x, z); d = [terrain.coarseSample(x, z).height - fine, terrain.ultraSample(x, z).height - fine]; sampled.set(key, d); }
+    return d;
+  };
+  for (const feature of features) {
+    const group = buildLandmark(feature, world); group.updateMatrixWorld(true);
+    const at = landmarkSwapDistance(feature);
+    const push = (geometry, matrix, tint, groundAt) => {
+      normals.getNormalMatrix(matrix);
+      const p = geometry.getAttribute('position'), q = geometry.getAttribute('normal');
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i).applyMatrix4(matrix); n.fromBufferAttribute(q, i).applyMatrix3(normals).normalize();
+        position.push(v.x - origin.x, v.y, v.z - origin.z); normal.push(n.x, n.y, n.z); color.push(tint.r, tint.g, tint.b);
+        ground.push(...(groundAt ?? deltas(v.x, v.z))); swap.push(at); center.push(feature.x, feature.z);
+      }
+    };
+    for (const child of group.children) {
+      if (child.isInstancedMesh) {
+        for (let k = 0; k < child.count; k++) {
+          child.getMatrixAt(k, instance); m.multiplyMatrices(child.matrixWorld, instance);
+          v.setFromMatrixPosition(m);
+          push(box, m, child.material.color, deltas(v.x, v.z)); // boxes stay rigid, as the real ones do
+        }
+      } else if (child.isMesh) {
+        push(child.geometry.index ? child.geometry.toNonIndexed() : child.geometry, child.matrixWorld, DECK_COLORS[feature.twist ? 1 : 0]);
+      }
+    }
+    group.traverse(o => { if (o.isMesh && o.geometry.userData.owned) o.geometry.dispose(); });
+  }
+  if (!position.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3)); geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normal, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(color, 3)); geometry.setAttribute('groundDeltas', new THREE.Float32BufferAttribute(ground, 2));
+  geometry.setAttribute('swapAt', new THREE.Float32BufferAttribute(swap, 1)); geometry.setAttribute('swapCenter', new THREE.Float32BufferAttribute(center, 2));
+  geometry.computeBoundingSphere(); geometry.boundingSphere.radius += 40;
+  return geometry;
 }

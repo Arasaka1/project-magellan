@@ -11,6 +11,12 @@ export const WEATHER_AREA = 2000; // metres
 // snow; deserts are almost always sunny, rain very rarely and never snow;
 // pine woods rain 40% of the time; open meadows somewhere in between.
 export const PRECIPITATION = { snow: .9, desert: .03, woods: .4, meadow: .2 };
+// How cloudy each region's sky usually is (0 clear, 1 overcast): deserts are
+// nearly cloudless, mountains often grey. It wanders around this over a few
+// minutes, and builds toward overcast shortly before rain or snow.
+export const CLOUDINESS = { snow: .66, desert: .1, woods: .48, meadow: .36 };
+export const CLOUD_DRIFT_CELL = 80; // seconds between cloudiness keyframes
+const GATHER = 35; // seconds of build-up before precipitation starts
 
 const smoothstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -37,12 +43,28 @@ export function weatherRoll(seed, x, z, time) {
   return { roll: hash(ax * 7919 + cell, az * 104729 - cell, seed + 7307), heaviness: .55 + .45 * hash(ax + cell * 31, az - cell * 17, seed + 7311) };
 }
 
+// Smooth, seeded wander of the cloud cover: -1 to 1, changing over minutes.
+export function cloudWander(seed, x, z, time) {
+  const ax = Math.floor(x / WEATHER_AREA), az = Math.floor(z / WEATHER_AREA), t = time / CLOUD_DRIFT_CELL, cell = Math.floor(t);
+  const f = smoothstep(0, 1, t - cell), at = c => hash(ax * 613 + c, az * 409 - c, seed + 7321) * 2 - 1;
+  return at(cell) * (1 - f) + at(cell + 1) * f;
+}
+
 // What the weather should be at a point: 'clear', 'rain' or 'snow', with a
-// strength from 0 to 1. A forced kind (?weather=…) skips the roll.
+// strength from 0 to 1, and how cloudy the sky is (0–1). A forced kind
+// (?weather=…) skips the roll.
 export function weatherAt(world, x, z, time, forced = null) {
   const weights = regionWeights(world, x, z), { chance, kind } = precipitationChance(weights);
   const region = Object.entries(weights).sort((a, b) => b[1] - a[1])[0][0];
-  if (forced) return { kind: forced, strength: forced === 'clear' ? 0 : 1, chance, region };
+  let base = 0;
+  for (const r in CLOUDINESS) base += CLOUDINESS[r] * (weights[r] ?? 0);
+  // Desert skies stay mostly clear, so they wander less.
+  const clouds = Math.min(.92, Math.max(0, base + cloudWander(world.seed, x, z, time) * (.06 + .2 * base)));
+  if (forced) return { kind: forced, strength: forced === 'clear' ? 0 : 1, chance, region, cloudiness: forced === 'clear' ? clouds : 1 };
   const { roll, heaviness } = weatherRoll(world.seed, x, z, time);
-  return roll < chance ? { kind, strength: heaviness, chance, region } : { kind: 'clear', strength: 0, chance, region };
+  if (roll < chance) return { kind, strength: heaviness, chance, region, cloudiness: 1 };
+  // Clouds gather ahead of the next spell of rain or snow.
+  const upcoming = weatherRoll(world.seed, x, z, time + GATHER).roll < chance;
+  const into = upcoming ? smoothstep(WEATHER_CELL - GATHER, WEATHER_CELL, time % WEATHER_CELL) : 0;
+  return { kind: 'clear', strength: 0, chance, region, cloudiness: clouds + (.95 - clouds) * into };
 }

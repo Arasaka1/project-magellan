@@ -19,6 +19,7 @@ export function createWeatherEffects(scene) {
   // uOffset is the fall so far, integrated each frame from the velocity
   // relative to the camera (and wrapped to the box), so a change of speed
   // bends the fall instead of making the particles jump.
+  const light = { value: new THREE.Color(1, 1, 1) }; // the scene's light on the drops: dim at night
   const time = { value: 0 }, wind = { value: new THREE.Vector3() }, rainOffset = { value: new THREE.Vector3() }, snowOffset = { value: new THREE.Vector3() };
 
   // Rain: short streaks along the fall direction relative to the camera, so
@@ -32,7 +33,7 @@ export function createWeatherEffects(scene) {
   rainGeometry.setAttribute('end', new THREE.BufferAttribute(rainEnds, 1));
   const rainMaterial = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
-    uniforms: { uTime: time, uFall: wind, uOffset: rainOffset, uBox: { value: RAIN_BOX }, uStrength: { value: 0 } },
+    uniforms: { uTime: time, uFall: wind, uOffset: rainOffset, uBox: { value: RAIN_BOX }, uStrength: { value: 0 }, uLight: light },
     vertexShader: `attribute vec4 seed; attribute float end;
       uniform float uTime; uniform vec3 uFall, uOffset, uBox; varying float vAlpha;
       void main(){
@@ -49,9 +50,9 @@ export function createWeatherEffects(scene) {
         vAlpha = (1.0 - smoothstep(uBox.x * .3, uBox.x * .5, d)) * smoothstep(.6, 2.5, d) * (.5 + .5 * end) * (1.0 + smoothstep(15.0, 60.0, rush) * .6);
         gl_Position = projectionMatrix * viewMatrix * vec4(p + cameraPosition, 1.0);
       }`,
-    fragmentShader: `uniform float uStrength; varying float vAlpha;
+    fragmentShader: `uniform float uStrength; uniform vec3 uLight; varying float vAlpha;
       void main(){
-        gl_FragColor = vec4(.82, .86, .9, vAlpha * .55 * uStrength);
+        gl_FragColor = vec4(vec3(.82, .86, .9) * uLight, vAlpha * .55 * uStrength);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
@@ -65,7 +66,7 @@ export function createWeatherEffects(scene) {
   snowGeometry.setAttribute('seed', new THREE.BufferAttribute(seeded(SNOW, 4, (d, i, r) => d.set([r(), r(), r(), r()], i * 4)), 4));
   const snowMaterial = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
-    uniforms: { uTime: time, uOffset: snowOffset, uBox: { value: SNOW_BOX }, uStrength: { value: 0 }, uScale: { value: 600 } },
+    uniforms: { uTime: time, uOffset: snowOffset, uBox: { value: SNOW_BOX }, uStrength: { value: 0 }, uScale: { value: 600 }, uLight: light },
     vertexShader: `attribute vec4 seed;
       uniform float uTime, uScale; uniform vec3 uOffset, uBox; varying float vAlpha;
       void main(){
@@ -78,12 +79,12 @@ export function createWeatherEffects(scene) {
         gl_PointSize = clamp((.11 + .09 * seed.w) * uScale / -view.z, 1.5, 22.0);
         gl_Position = projectionMatrix * view;
       }`,
-    fragmentShader: `uniform float uStrength; varying float vAlpha;
+    fragmentShader: `uniform float uStrength; uniform vec3 uLight; varying float vAlpha;
       void main(){
         float r = length(gl_PointCoord - .5);
         float a = (1.0 - smoothstep(.15, .5, r)) * vAlpha * .95 * uStrength;
         if (a < .01) discard;
-        gl_FragColor = vec4(.96, .97, 1.0, a);
+        gl_FragColor = vec4(vec3(.96, .97, 1.0) * uLight, a);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
@@ -120,6 +121,7 @@ export function createWeatherEffects(scene) {
       }
     },
     setDensity(value) { density = value; },
+    setLight(color) { light.value.copy(color); },
     get counts() { return { rain: rain.visible ? rainGeometry.drawRange.count / 2 : 0, snow: snow.visible ? snowGeometry.drawRange.count : 0 }; },
   };
 }

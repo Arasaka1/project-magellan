@@ -37,13 +37,14 @@ self.onmessage = ({ data: job }) => {
       }
     }
     if (job.kind === 'far') {
-      // Distant forests: the same seeded trees the near chunks will place, so
-      // stand-ins and real trees cross-fade without the forest changing shape.
-      const trees = { id: [], x: [], z: [], size: [], turn: [], fineY: [], coarseY: [], ultraY: [] };
+      // Distant scenery: the same seeded trees, cacti, rocks, boulders and bushes the
+      // near chunks will place, so each stand-in swaps with its real model in
+      // place and the landscape never changes shape.
+      const trees = { id: [], type: [], x: [], z: [], size: [], turn: [], fineY: [], coarseY: [], ultraY: [] };
       for (let dz = 0; dz < 4; dz++) for (let dx = 0; dx < 4; dx++) {
         for (const p of world.props(job.cx * 4 + dx, job.cz * 4 + dz)) {
-          if (p.type !== 'tree') continue;
-          trees.id.push(p.id); trees.x.push(p.x); trees.z.push(p.z); trees.size.push(p.size); trees.turn.push(p.turn);
+          if (p.type !== 'tree' && p.type !== 'cactus' && p.type !== 'rock' && p.type !== 'boulder' && p.type !== 'bush') continue;
+          trees.id.push(p.id); trees.type.push(p.type); trees.x.push(p.x); trees.z.push(p.z); trees.size.push(p.size); trees.turn.push(p.turn);
           trees.fineY.push(p.y); trees.coarseY.push(terrain.coarseSample(p.x, p.z).height); trees.ultraY.push(terrain.ultraSample(p.x, p.z).height);
         }
       }

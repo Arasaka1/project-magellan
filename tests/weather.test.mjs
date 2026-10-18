@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { weatherAt, regionWeights, precipitationChance, PRECIPITATION, WEATHER_CELL, WEATHER_AREA } from '../weather.mjs';
+import { weatherAt, regionWeights, precipitationChance, PRECIPITATION, CLOUDINESS, WEATHER_CELL, WEATHER_AREA } from '../weather.mjs';
 import { createWorld } from '../world.mjs';
 
 // A world that is one kind of region everywhere.
@@ -49,4 +49,26 @@ test('region weights in a real world sum to one and the chance blends between re
     const { chance } = precipitationChance(w);
     assert.ok(chance >= PRECIPITATION.desert - 1e-9 && chance <= PRECIPITATION.snow + 1e-9);
   }
+});
+
+test('cloud cover follows the region, wanders slowly, gathers before rain and is overcast during it', () => {
+  const sample = (world, t) => weatherAt(world, 500, 700, t);
+  const median = world => { const v = []; for (let t = 0; t < 7200; t += 7) { const w = sample(world, t); if (w.kind === 'clear') v.push(w.cloudiness); } v.sort((a, b) => a - b); return v[v.length >> 1]; };
+  const desert = median(regions.desert), meadow = median(regions.meadow), woods = median(regions.woods), snow = median(regions.snow);
+  assert.ok(desert < .2 && desert < meadow && meadow < woods && woods < snow, `${desert} ${meadow} ${woods} ${snow}`);
+  for (const [name, world] of Object.entries(regions)) assert.ok(Math.abs(median(world) - CLOUDINESS[name]) < .08, name);
+  // Smooth: no jumps between moments, except where rain itself starts or stops.
+  for (let t = 0; t < 3600; t += .25) {
+    const a = sample(regions.woods, t), b = sample(regions.woods, t + .25);
+    if (a.kind === b.kind) assert.ok(Math.abs(a.cloudiness - b.cloudiness) < .02, `jump at ${t}`);
+    if (a.kind !== 'clear') assert.equal(a.cloudiness, 1);
+  }
+  // Right before a wet spell, the sky has already clouded over.
+  let checked = 0;
+  for (let cell = 1; cell < 300 && checked < 10; cell++) {
+    const before = sample(regions.woods, cell * WEATHER_CELL - .5), during = sample(regions.woods, cell * WEATHER_CELL + .5);
+    if (before.kind === 'clear' && during.kind !== 'clear') { assert.ok(before.cloudiness > .85, `gathered: ${before.cloudiness}`); checked++; }
+  }
+  assert.ok(checked > 3);
+  assert.equal(weatherAt(regions.desert, 0, 0, 0, 'rain').cloudiness, 1);
 });

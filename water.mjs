@@ -57,7 +57,7 @@ const skyFunctions = `
     if(clouds){
       vec2 p=ray.xz/max(ray.y,.05)*1.3;
       float n=noiseSky(p)*.5+noiseSky(p*2.1)*.25+noiseSky(p*4.2)*.125;
-      c=mix(c,vec3(.87,.90,.87),smoothstep(.44,.74,n)*smoothstep(.025,.14,ray.y)*(1.0-smoothstep(.7,.95,ray.y))*.62);
+      c=mix(c,uCloudTone,smoothstep(.44,.74,n)*smoothstep(.025,.14,ray.y)*(1.0-smoothstep(.7,.95,ray.y))*.62);
     }
     return c;
   }`;
@@ -67,13 +67,13 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
   let wanted = new Map();
   const time = { value: 0 };
   // 1 on Medium and above: second wave layer, reflected clouds and sparkle.
-  const detail = { value: 1 }, waves = { value: waveTexture() }, caustic = { value: new THREE.Vector4() };
+  const detail = { value: 1 }, waves = { value: waveTexture() }, caustic = { value: new THREE.Vector4() }, ambient = { value: new THREE.Color(1, 1, 1) };
   const material = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.FrontSide,
     uniforms: { uTime: time, uStreamCenter: streamCenter, uFogNear: fog.uFogNear, uFogFar: fog.uFogFar, uDetail: detail, uWaves: waves,
       uShallow: { value: new THREE.Color('#4fb0a2') }, uDeep: { value: new THREE.Color('#1c4a5e') }, uSky: { value: new THREE.Color('#b9cdd0') },
       uSkyTop: { value: new THREE.Color(light.skyTop ?? '#729eaf') }, uSkyBottom: { value: new THREE.Color(light.skyBottom ?? '#b9cdd0') },
-      uSunDir: { value: (light.sunDirection ?? new THREE.Vector3(-.52, .8, .36)).clone().normalize() }, uSunColor: { value: new THREE.Color(light.sunColor ?? '#fff0d2') } },
+      uSunDir: { value: (light.sunDirection ?? new THREE.Vector3(-.52, .8, .36)).clone().normalize() }, uSunColor: { value: new THREE.Color(light.sunColor ?? '#fff0d2') }, uCloudTone: { value: new THREE.Color(.87, .9, .87) }, uLight: ambient },
     vertexShader: `attribute float bedDepth; attribute vec2 lakeUV;
       uniform float uTime; varying vec3 vWorld; varying float vDepth; varying vec2 vLake;
       attribute vec2 groundY; uniform vec2 uStreamCenter;
@@ -90,7 +90,7 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
       }`,
     fragmentShader: `uniform float uTime,uFogNear,uFogFar,uDetail; uniform sampler2D uWaves;
-      uniform vec3 uShallow,uDeep,uSky,uSkyTop,uSkyBottom,uSunDir,uSunColor;
+      uniform vec3 uShallow,uDeep,uSky,uSkyTop,uSkyBottom,uSunDir,uSunColor,uCloudTone,uLight;
       varying vec3 vWorld; varying float vDepth; varying vec2 vLake;
       ${skyFunctions}
       void main(){
@@ -118,7 +118,8 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         vec3 sky=skyAt(normalize(r),uDetail>.5);
         float fresnel=.02+.98*pow(1.-max(dot(n,view),0.),5.);
         // Light is absorbed with depth: clear turquoise edges, deep blue centre.
-        vec3 body=mix(uShallow,uDeep,1.-exp(-vDepth*.32));
+        // The water's own colour is lit by the scene: dim at night, warm at dusk.
+        vec3 body=mix(uShallow,uDeep,1.-exp(-vDepth*.32))*uLight;
         vec3 color=mix(body,sky,clamp(fresnel*1.15,0.,1.));
         // Sun glitter from the scene's actual sun: a broad sheen plus fine sparkle.
         vec3 h=normalize(view+uSunDir); float nh=max(dot(n,h),0.);
@@ -126,7 +127,7 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         // Shoreline foam: broken up by noise, lapping in and out over the shallows.
         float shore=1.-smoothstep(.05,.75,vDepth), lap=.5+.5*sin(uTime*1.3-vDepth*7.+foamNoise*4.);
         float foam=shore*smoothstep(.52,.78,foamNoise*.75+lap*.45)*near;
-        color=mix(color,vec3(.93,.96,.94),foam*.85);
+        color=mix(color,vec3(.93,.96,.94)*uLight,foam*.85);
         color=mix(color,uSky,smoothstep(uFogNear,uFogFar,far));
         // Close up, shallows show the bed. Further away the terrain beneath is
         // a coarse tier just under the surface (sand-coloured near shores), so
@@ -192,10 +193,10 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
   const opacity = new Float32Array(capacity), kinds = new Float32Array(capacity);
   wakeGeometry.setAttribute('wakeOpacity', new THREE.InstancedBufferAttribute(opacity, 1).setUsage(THREE.DynamicDrawUsage));
   wakeGeometry.setAttribute('wakeKind', new THREE.InstancedBufferAttribute(kinds, 1).setUsage(THREE.DynamicDrawUsage));
-  const wakeMaterial = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uWaves: waves },
+  const wakeMaterial = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { uWaves: waves, uLight: ambient },
     vertexShader: `attribute float wakeOpacity, wakeKind; varying float alpha, kind; varying vec2 vUv, vXZ;
       void main(){alpha=wakeOpacity;kind=wakeKind;vUv=position.xz;vec4 w=modelMatrix*instanceMatrix*vec4(position,1.);vXZ=w.xz;gl_Position=projectionMatrix*viewMatrix*w;}`,
-    fragmentShader: `uniform sampler2D uWaves; varying float alpha, kind; varying vec2 vUv, vXZ;
+    fragmentShader: `uniform sampler2D uWaves; uniform vec3 uLight; varying float alpha, kind; varying vec2 vUv, vXZ;
       void main(){
         float r=length(vUv), shape;
         if(kind<.5) shape=exp(-vUv.x*vUv.x*3.)*(1.-smoothstep(.3,1.,abs(vUv.y)));    // streak
@@ -204,7 +205,7 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         float foam=texture2D(uWaves,vXZ*.11).z;
         float a=alpha*shape*mix(.15,1.,smoothstep(.3,.75,foam+shape*.2));
         if(a<.004)discard;
-        gl_FragColor=vec4(.9,.95,.93,a);
+        gl_FragColor=vec4(vec3(.9,.95,.93)*uLight,a);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`
@@ -285,9 +286,16 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
   // Weather: the reflected sky, the fade colour and the sun's glitter follow
   // the overcast sky. Colours are copied, so callers can reuse theirs.
   const baseSun = material.uniforms.uSunColor.value.clone();
-  function setSky(top, bottom, sun) {
+  // direction and color (optional): the key light (sun or moon) for glitter;
+  // clouds: the reflected clouds' colour, which follows the time of day.
+  // light: the scene's light on the water itself (white by day, dark at night).
+  function setSky(top, bottom, sun, direction, color, clouds, light) {
     const u = material.uniforms;
-    u.uSkyTop.value.copy(top); u.uSkyBottom.value.copy(bottom); u.uSky.value.copy(bottom); u.uSunColor.value.copy(baseSun).multiplyScalar(sun);
+    if (light) ambient.value.copy(light);
+    u.uSkyTop.value.copy(top); u.uSkyBottom.value.copy(bottom); u.uSky.value.copy(bottom);
+    u.uSunColor.value.copy(color ?? baseSun).multiplyScalar(sun);
+    if (direction) u.uSunDir.value.copy(direction).normalize();
+    if (clouds) u.uCloudTone.value.copy(clouds);
   }
   const setDetail = on => { detail.value = on ? 1 : 0; causticCheck = 0; if (!on) caustic.value.z = 0; };
   return { sync, install, update, clear, installDistant, setDetail, setSky, drainSplashes: () => splashes.splice(0), causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
