@@ -847,11 +847,11 @@ function updateSound(throttle, splashes, dt) {
   // flight, or a fast car hopping over rough ground, touches many times a
   // second: each touch restarts the gap, so a run of contacts thumps once, on
   // the first, and again only after a real time in the air. A car landing
-  // also needs a real jump (or a hard hit) behind it.
+  // makes no thump at all; only knocks against walls and props do.
   const t = audio.context.currentTime, landed = v.landings !== heard.landings;
   if (v.impact > decayed + .03 && !v.floating && !splashes.length) {
     const quiet = t - heard.contact; heard.contact = t;
-    const worth = v.flightMode ? v.impact > .1 && quiet > 1.2 : landed ? (v.airtime > .3 || v.impact > .15) && quiet > .5 : v.impact > .1 && quiet > .5;
+    const worth = v.flightMode ? v.impact > .1 && quiet > 1.2 : !landed && v.impact > .1 && quiet > .5;
     if (worth) audio.vehicle.thump(v.impact);
   }
   heard.impact = v.impact; heard.landings = v.landings;
