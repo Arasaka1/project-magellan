@@ -256,7 +256,7 @@ test('F unfolds the wings, the car takes off, climbs, and folds them to land', a
 });
 
 test.describe('mobile Chrome controls', () => {
-  test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 390, height: 844 } });
+  test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 844, height: 390 } });
 test('graphics presets cycle, and the steering slider replaces the arrow buttons', async ({ page }, testInfo) => {
   const errors = await openGame(page, 3);
   await expect(page.locator('#qualityBtn')).toHaveText('Graphics: Medium');
@@ -282,7 +282,7 @@ test('graphics presets cycle, and the steering slider replaces the arrow buttons
   const slider = page.getByRole('slider', { name: 'Steering: slide left or right' });
   await expect(slider).toBeVisible();
   const track = await slider.boundingBox(), pedal = await page.getByRole('button', { name: 'Accelerate', exact: true }).boundingBox();
-  expect(track.x).toBeLessThan(40); expect(track.y + track.height).toBeGreaterThan(780);
+  expect(track.x).toBeLessThan(40); expect(track.y + track.height).toBeGreaterThan(330);
   const jumpBox = await page.getByRole('button', { name: 'Jump', exact: true }).boundingBox(), flyBox = await page.getByRole('button', { name: 'Fly', exact: true }).boundingBox(), brakeBox = await page.getByRole('button', { name: 'Brake or reverse', exact: true }).boundingBox();
   expect(jumpBox.y + jumpBox.height).toBeLessThanOrEqual(track.y + 1); expect(jumpBox.x).toBeLessThan(track.x + track.width); // above the slider
   expect(flyBox.x + flyBox.width).toBeLessThanOrEqual(brakeBox.x + 1); expect(Math.abs(flyBox.y + flyBox.height - brakeBox.y - brakeBox.height)).toBeLessThan(2); // left of the brake
@@ -320,8 +320,26 @@ test('graphics presets cycle, and the steering slider replaces the arrow buttons
   await expect(page.getByRole('slider', { name: /Flight control/ })).toBeHidden();
   expect(errors).toEqual([]);
 });
-test('a second world request cancels old work and touch controls still jump', async ({ page }) => {
+test('held upright, a phone asks to be turned sideways and will not drive', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  const errors = await openGame(page, 3);
+  const notice = page.getByRole('alert').filter({ hasText: 'Turn your phone sideways' });
+  await expect(notice).toBeVisible();
+  await page.locator('#startBtn').dispatchEvent('click'); // the notice covers the button
+  await expect(page.locator('body')).not.toHaveClass(/driving/);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expect(notice).toBeHidden();
+  // A click, not a tap: a tap goes fullscreen, and the test browser can't
+  // resize a fullscreen window.
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).dispatchEvent('click');
+  await expect(page.locator('body')).toHaveClass(/driving/);
+  // Turning it upright again pauses the drive.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(notice).toBeVisible();
+  await expect(page.locator('body')).not.toHaveClass(/driving/);
+  expect(errors).toEqual([]);
+});
+test('a second world request cancels old work and touch controls still jump', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = await openGame(page, 100003);
   // These menu buttons remain available while background generation is active.

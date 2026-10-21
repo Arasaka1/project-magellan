@@ -27,6 +27,10 @@ import { buildLandmark, cloneOwnedGeometry, buildLandmarkStandins, landmarkSwapD
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
+// A phone (not a tablet) is held sideways to play: its short side is under 600 px.
+const phone = coarse && Math.min(screen.width, screen.height) < 600;
+const landscape = matchMedia('(orientation: landscape)');
+const upright = () => phone && !landscape.matches;
 const reducedMotion = matchMedia('(prefers-reduced-motion:reduce)').matches;
 const testMode = ['drive', 'ramp', 'twist', 'smash', 'tree-smash', 'browser', 'water', 'boat', 'fly', 'sea'].includes(new URLSearchParams(location.search).get('test'));
 const profiler = createProfiler(testMode);
@@ -898,7 +902,7 @@ function syncInput() {
 }
 const throttleInput = () => controlAxis(input.throttle, input.up, input.down);
 function resume() {
-  if ($('startBtn').disabled) return;
+  if ($('startBtn').disabled || upright()) return;
   running = true; started = true; resetTiming(); auto?.reset(performance.now());
   $('menu').classList.add('closed'); $('menu').inert = true; $('menu').setAttribute('aria-hidden', 'true');
   $('pauseBtn').hidden = false; document.body.classList.add('driving'); renderer.domElement.focus({ preventScroll: true });
@@ -1118,7 +1122,6 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) ring.el
 // the next tap (on anything) asks for it; turning back to portrait leaves it.
 // (iPhone Safari has no page fullscreen: added to the home screen, the game
 // opens fullscreen instead.)
-const landscape = matchMedia('(orientation: landscape)');
 const fullscreenElement = () => document.fullscreenElement ?? document.webkitFullscreenElement;
 function enterFullscreen() {
   if (!coarse || !landscape.matches || fullscreenElement() || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return;
@@ -1127,6 +1130,13 @@ function enterFullscreen() {
 }
 addEventListener('pointerdown', enterFullscreen, { capture: true });
 landscape.addEventListener('change', () => { if (!landscape.matches && fullscreenElement()) (document.exitFullscreen ?? document.webkitExitFullscreen)?.call(document)?.catch?.(() => {}); });
+// Phones don't play upright: a notice asks to turn the phone sideways, and
+// the drive pauses until it is.
+function syncOrientation() {
+  document.body.classList.toggle('upright', upright());
+  if (upright()) pause();
+}
+landscape.addEventListener('change', syncOrientation); syncOrientation();
 
 const mapContext = $('minimap').getContext('2d');
 function drawMap() {

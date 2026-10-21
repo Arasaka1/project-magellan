@@ -1102,3 +1102,17 @@ body.plane-mode #touch [data-control="jump"], body.plane-mode #touch [data-contr
 @media (orientation: landscape) and (max-height: 600px) {
   body.touch #toast { bottom:max(24px,env(safe-area-inset-bottom)); max-width:calc(100% - 440px); white-space:normal; text-align:center; line-height:1.45; padding:10px 16px; }
 }
+
+/* Phones play in landscape only: held upright, this covers the game. */
+#rotateNotice { display:none; }
+body.upright #rotateNotice {
+  position:fixed; inset:0; z-index:40; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+  padding:24px max(24px,env(safe-area-inset-right)) 24px max(24px,env(safe-area-inset-left)); background:var(--ink); color:var(--cream); text-align:center;
+}
+#rotateNotice svg { width:72px; height:72px; fill:none; stroke:var(--yellow); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; margin-bottom:8px; }
+#rotateNotice strong { font-family:'Manrope',sans-serif; font-size:22px; font-weight:700; }
+#rotateNotice span { font-size:14px; opacity:.75; }
+@media(prefers-reduced-motion:no-preference) {
+  #rotateNotice svg rect { transform-origin:24px 21px; animation:rotate-hint 2.4s ease-in-out infinite; }
+}
+@keyframes rotate-hint { 0%,25% { transform:rotate(0); } 50%,75% { transform:rotate(-90deg); } 100% { transform:rotate(0); } }
